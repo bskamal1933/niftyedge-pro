@@ -1,0 +1,8 @@
+# NiftyEdge Pro — Core Requirements
+# Install with: pip install -r requirements.txt
+
+flask>=2.3.0
+requests>=2.31.0
+flask-cors>=4.0.0
+nsepython>=2.2
+playwright>=1.40.0

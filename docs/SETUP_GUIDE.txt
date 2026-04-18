@@ -1,0 +1,150 @@
+============================================================
+  NiftyEdge Pro v3 — Complete Setup Guide
+============================================================
+
+FILES:
+  server.py                      ← Python backend (REQUIRED)
+  nifty_options_dashboard.html   ← Browser dashboard
+  app.py                         ← Windows Desktop App (optional)
+
+============================================================
+OPTION A — Browser Mode (Recommended)
+============================================================
+
+STEP 1: Install packages
+  pip install flask requests flask-cors
+
+STEP 2: Run server
+  python server.py
+
+STEP 3: Open dashboard.html in Chrome or Edge
+
+============================================================
+OPTION B — Windows Desktop App
+============================================================
+
+STEP 1: Install all packages
+  pip install flask requests flask-cors pywebview pystray Pillow win10toast
+
+STEP 2: Run app (starts server automatically)
+  python app.py
+
+Features:
+  • Native window with embedded browser
+  • System tray icon (minimize to tray)
+  • Desktop toast notifications for high-confidence tips (conf ≥ 78%)
+  • Live accuracy panel in the app window
+  • Auto-starts server.py in background
+
+============================================================
+NEW IN v3: TIP LOGGER + ACCURACY TRACKER
+============================================================
+
+DATABASE: niftyedge_tips.db (SQLite, created automatically)
+
+Every BUY/SELL tip is logged with:
+  • Entry price, Target, Stop Loss
+  • Confidence %, Score, all 9 factor values
+  • Spot price at time of tip
+
+Auto-resolution (every 30 seconds):
+  • Server checks if option price hit TARGET → marks WIN
+  • Server checks if option price hit STOP   → marks LOSS
+  • After timeframe expires                  → marks EXPIRED
+
+Manual override from dashboard:
+  • Go to "TIP LOG" tab
+  • Click W (Win) or L (Loss) button on any tip
+  • Enter exit price → P&L% auto-calculated
+
+Adaptive Learning:
+  • Each WIN boosts the factors that contributed
+  • Each LOSS reduces those factors
+  • Learning rate = 0.05 (gentle, stable)
+  • Weights saved to database, loaded on next server start
+  • Over time: accuracy improves as weights tune to market
+
+============================================================
+9 SIGNAL FACTORS (v3 Advanced Model)
+============================================================
+
+1. PCR (Put-Call Ratio)
+   >1.4 = strong bull, <0.6 = strong bear
+
+2. Bull Probability (Black-Scholes)
+   Statistical probability of bullish close at expiry
+
+3. OI Change Pattern
+   Short covering, fresh buildup, smart money detection
+
+4. Max Pain Distance
+   Expiry magnetic pull towards option writers' sweet spot
+
+5. Trend (EMA9/EMA21 cross + candle direction)
+   Primary trend structure filter
+
+6. RSI (14-period)
+   Oversold <35 = buy, Overbought >65 = sell
+
+7. Momentum (Rate of Change)
+   Speed and direction of price movement
+
+8. VWAP (Volume Weighted Average Price)
+   Institutional price level — above = bullish bias
+
+9. IV Rank
+   High IV (>25%) = sell options, Low IV (<12%) = buy
+
+BONUS factors:
+   • Bollinger Band breakout
+   • Stochastic K confirmation
+
+All weighted and adaptive — weights improve with each outcome.
+
+============================================================
+ACCURACY PAGE
+============================================================
+  Shows win/loss/total for each symbol + timeframe + direction
+  Updates in real-time as outcomes are resolved
+  Color coded: Green ≥65%, Amber ≥50%, Red <50%
+
+============================================================
+WEIGHTS PAGE
+============================================================
+  Shows current adaptive weights for all 9 factors
+  Visual bar chart per factor
+  Resets to default if you delete niftyedge_tips.db
+
+============================================================
+API ENDPOINTS
+============================================================
+  GET  /api/status              → server health
+  GET  /api/snapshot/NIFTY      → current analysis + tips
+  GET  /api/accuracy            → tip log + accuracy report
+  GET  /api/weights             → current adaptive weights
+  POST /api/tip/{id}/outcome    → manually mark WIN/LOSS
+  GET  /stream                  → SSE real-time stream
+
+============================================================
+TROUBLESHOOTING
+============================================================
+Q: app.py says "pywebview not found"
+A: pip install pywebview
+
+Q: No tray icon
+A: pip install pystray Pillow
+
+Q: No toast notifications
+A: pip install win10toast
+
+Q: Tips show 0.0 P&L
+A: NSE option prices are available only during market hours.
+   Manual marking works anytime via TIP LOG tab.
+
+============================================================
+⚠ DISCLAIMER
+============================================================
+FOR EDUCATIONAL AND RESEARCH PURPOSES ONLY.
+NOT SEBI REGISTERED INVESTMENT ADVICE.
+Option trading involves significant risk of loss.
+============================================================
