@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: niftyedge-pro
+    runtime: python
+    buildCommand: pip install -r requirements.txt && playwright install chromium --with-deps
+    startCommand: gunicorn --worker-class=gthread --workers=1 --threads=8 --timeout=0 --bind=0.0.0.0:$PORT server:app
+    envVars:
+      - key: PUBLIC_URL
+        value: https://pykt.in
+      - key: DB_PATH
+        value: /data/niftyedge_tips.db
+      - key: CACHE_DIR
+        value: /data/cache
+    disk:
+      name: niftyedge-data
+      mountPath: /data
+      sizeGB: 1

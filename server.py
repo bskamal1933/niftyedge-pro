@@ -16,7 +16,7 @@ RUN:
   python server.py
 """
 
-from flask import Flask, jsonify, Response, request
+from flask import Flask, jsonify, Response, request, send_file
 from flask_cors import CORS
 import requests, json, time, threading, math, logging, sqlite3, os, shutil
 from datetime import datetime, timezone, timedelta, date as _date
@@ -39,13 +39,15 @@ except ImportError:
 app  = Flask(__name__)
 CORS(app)
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # ── Config ────────────────────────────────────────────────────────────────────
 POLL_INTERVAL = 3
 CANDLE_MINS   = [1, 10, 20, 30, 60, 180]
 SYMBOLS       = ['NIFTY', 'BANKNIFTY']
 MAX_CANDLES   = 300
-DB_PATH       = 'niftyedge_tips.db'
-CACHE_DIR     = 'cache'           # historical snapshot store for sample mode
+DB_PATH       = os.environ.get("DB_PATH", os.path.join(BASE_DIR, 'niftyedge_tips.db'))
+CACHE_DIR     = os.environ.get("CACHE_DIR", os.path.join(BASE_DIR, 'cache'))
 
 # Allow overriding public URL / port via environment for deployments (e.g. pykt.in)
 PORT = int(os.environ.get("PORT", "5000"))
@@ -1375,7 +1377,11 @@ def poll_loop():
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
 @app.route("/")
-def home(): return jsonify({"status":"NiftyEdge Pro v3","db":DB_PATH})
+def home():
+    html = os.path.join(BASE_DIR, 'nifty_options_dashboard.html')
+    if os.path.exists(html):
+        return send_file(html)
+    return jsonify({"status":"NiftyEdge Pro v3","db":DB_PATH})
 
 @app.route("/api/status")
 def api_status():
@@ -1505,14 +1511,10 @@ def stream():
                 except: pass
     return Response(gen(),mimetype="text/event-stream",headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})
 
-# ── Main ───────────────────────────────────────────────────────────────────────
-if __name__=="__main__":
-    print(); print("="*58)
-    print("   NiftyEdge Pro v3 — Real-Time + Tip Logger")
-    print("="*58)
+# ── Startup ────────────────────────────────────────────────────────────────────
+def _startup():
     init_db()
     refresh_cookies()
-    # Load adaptive weights from last saved DB state
     try:
         conn=sqlite3.connect(DB_PATH)
         for sym in SYMBOLS:
@@ -1524,7 +1526,18 @@ if __name__=="__main__":
                     print(f"  [DB] Loaded weights for {sym} {tf}m")
         conn.close()
     except: pass
-    t=threading.Thread(target=poll_loop,daemon=True); t.start()
+    threading.Thread(target=poll_loop,daemon=True).start()
+
+# When imported by gunicorn, run startup in the worker process
+if __name__ != "__main__":
+    _startup()
+
+# ── Main ───────────────────────────────────────────────────────────────────────
+if __name__=="__main__":
+    print(); print("="*58)
+    print("   NiftyEdge Pro v3 — Real-Time + Tip Logger")
+    print("="*58)
+    _startup()
     print(f"\n  [OK] Stream : {PUBLIC_URL}/stream")
     print(f"  [OK] Accuracy: {PUBLIC_URL}/api/accuracy")
     print(f"  [OK] DB      : {DB_PATH}")
