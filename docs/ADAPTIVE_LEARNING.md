@@ -12,21 +12,21 @@ Every BUY or SELL signal (non-NEUTRAL) is written to `niftyedge_tips.db` (SQLite
 
 Each logged tip stores:
 
-| Field | Description |
-|---|---|
-| `instrument` | e.g., `NIFTY 24450 CE` |
-| `entry` | Option LTP at time of signal |
-| `target` | Entry × target multiplier |
-| `sl` | Entry × SL multiplier |
-| `confidence` | Confidence % |
-| `score` | Weighted signal score (±14) |
-| `spot_at_tip` | Underlying spot price |
-| `pcr` | PCR at time of signal |
-| `iv` | ATM IV at time of signal |
-| `rationale` | Full factor breakdown string |
-| `created_at` | UTC timestamp |
+| Field         | Description                     |
+| ------------- | ------------------------------- |
+| `instrument`  | e.g., `NIFTY 24450 CE`          |
+| `entry`       | Option LTP at time of signal    |
+| `target`      | Entry × target multiplier       |
+| `sl`          | Entry × SL multiplier           |
+| `confidence`  | Confidence %                    |
+| `score`       | Weighted signal score (±14)     |
+| `spot_at_tip` | Underlying spot price           |
+| `pcr`         | PCR at time of signal           |
+| `iv`          | ATM IV at time of signal        |
+| `rationale`   | Full factor breakdown string    |
+| `created_at`  | UTC timestamp                   |
 | `expiry_time` | created_at + timeframe duration |
-| `outcome` | PENDING / WIN / LOSS / EXPIRED |
+| `outcome`     | PENDING / WIN / LOSS / EXPIRED  |
 
 ---
 
@@ -55,12 +55,14 @@ Resolution only works during market hours when live option prices are available.
 ## Manual Override
 
 You can also mark outcomes manually from the **Tip Log** tab in the dashboard:
+
 1. Find any PENDING tip in the table
 2. Click **Win** or **Loss**
 3. Enter the exit price
 4. P&L% is calculated automatically
 
 This is useful for:
+
 - Marking trades you actually took
 - Correcting auto-resolved outcomes
 - Logging trades during low-liquidity periods
@@ -88,15 +90,15 @@ for each factor:
 
 **Factor multipliers** (some factors are adjusted more aggressively than others):
 
-| Factor | Multiplier |
-|---|---|
-| PCR | 1.2 |
-| Bull Probability | 1.0 |
-| OI Change | 0.8 |
-| Max Pain | 0.6 |
-| EMA Trend | 1.0 |
-| RSI | 0.7 |
-| Momentum | 0.8 |
+| Factor           | Multiplier |
+| ---------------- | ---------- |
+| PCR              | 1.2        |
+| Bull Probability | 1.0        |
+| OI Change        | 0.8        |
+| Max Pain         | 0.6        |
+| EMA Trend        | 1.0        |
+| RSI              | 0.7        |
+| Momentum         | 0.8        |
 
 ---
 
@@ -105,11 +107,13 @@ for each factor:
 **Scenario:** Over 50 trades, the RSI factor is correct 75% of the time but PCR is only correct 45% of the time for NIFTY 10-minute signals.
 
 **Result after learning:**
+
 - RSI weight increases from 1.0 → ~1.6
 - PCR weight decreases from 2.0 → ~1.2
 - Tips now rely less on PCR and more on RSI for 10-minute signals
 
 **Scenario 2:** In a trending market, EMA trend is very reliable.
+
 - EMA weight increases from 2.0 → ~3.5
 - Trending signals get higher confidence scores
 
@@ -123,8 +127,8 @@ On server startup, the most recent saved weights for each symbol×timeframe comb
 
 ```python
 # From server.py startup:
-row = db.query("SELECT weights FROM weight_history 
-                WHERE symbol=? AND tf_mins=? 
+row = db.query("SELECT weights FROM weight_history
+                WHERE symbol=? AND tf_mins=?
                 ORDER BY id DESC LIMIT 1")
 if row:
     adaptive_weights[sym][tf].update(json.loads(row[0]))
@@ -139,11 +143,13 @@ This means the model **retains its learning across restarts and updates**.
 In the dashboard, go to the **Weights** tab. Each factor is shown as a bar chart with its current weight value.
 
 Via API:
+
 ```
 GET https://pykt.in/api/weights
 ```
 
 Response:
+
 ```json
 {
   "NIFTY": {
@@ -169,6 +175,7 @@ Response:
 The **Accuracy** tab shows win rate, loss rate, and average P&L per symbol × timeframe × direction combination.
 
 Via API:
+
 ```
 GET https://pykt.in/api/accuracy
 ```
@@ -178,6 +185,7 @@ GET https://pykt.in/api/accuracy
 ## Resetting the Model
 
 To reset all weights and tip history:
+
 ```bash
 rm niftyedge_tips.db
 ```
@@ -195,4 +203,4 @@ The database will be recreated fresh on next server start with default weights.
 
 ---
 
-*See `SIGNAL_MODEL.md` for the complete list of factors and scoring rules.*
+_See `SIGNAL_MODEL.md` for the complete list of factors and scoring rules._
