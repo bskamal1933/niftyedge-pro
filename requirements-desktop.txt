@@ -1,0 +1,8 @@
+# NiftyEdge Pro — Desktop App Requirements
+# Install with: pip install -r requirements-desktop.txt
+# (Also install core requirements first)
+
+pywebview>=4.4.0
+pystray>=0.19.5
+Pillow>=10.0.0
+win10toast>=0.9
