@@ -1402,6 +1402,7 @@ def home():
 
 @app.route("/api/status")
 def api_status():
+    _ensure_poll_running()  # auto-restart if thread died
     return jsonify({"status":"ok","version":"3.0","time_ist":ist_now().strftime("%H:%M:%S"),
                     "subscribers":len(subscribers),"demo_mode":_demo_mode})
 
