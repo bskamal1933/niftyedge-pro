@@ -1743,6 +1743,16 @@
             <div class="section-label">Signal Rationale</div>
             <div class="rationale-box" id="rationaleBox">—</div>
           </div>
+          <!-- Locked Active Tips from DB -->
+          <div class="card" id="lockedTipsCard" style="flex-shrink:0;">
+            <div class="card-head" style="padding:8px 12px;">
+              <div class="card-title" style="font-size:11px;">Active Locked Tips <span id="lockedTipsCount" style="color:var(--dim);font-weight:400;font-size:10px;margin-left:4px"></span></div>
+              <button class="action-btn" onclick="loadLiveTips()" style="padding:2px 8px;font-size:10px;">↻</button>
+            </div>
+            <div id="lockedTipsBody" style="padding:8px;display:flex;flex-direction:column;gap:6px;max-height:220px;overflow-y:auto;">
+              <div style="font-size:11px;color:var(--dim);text-align:center;padding:10px 0;">No active tips</div>
+            </div>
+          </div>
           <div class="disc-note">⚠ Educational use only · Not SEBI registered</div>
         </div>
         <div style="flex:1;display:flex;flex-direction:column;gap:12px;overflow:hidden;min-width:0;">
@@ -2714,6 +2724,44 @@
       return `<span style="color:${col}">${m}:${String(s).padStart(2, '0')}</span>`;
     }
 
+    async function loadLiveTips() {
+      const body = document.getElementById('lockedTipsBody');
+      const countEl = document.getElementById('lockedTipsCount');
+      try {
+        const r = await fetch('/api/live-tips');
+        if (!r.ok) throw new Error(r.status);
+        const d = await r.json();
+        const tips = d.live_tips || [];
+        if (countEl) countEl.textContent = tips.length ? `(${tips.length})` : '';
+        if (!tips.length) {
+          body.innerHTML = '<div style="font-size:11px;color:var(--dim);text-align:center;padding:10px 0;">No active tips</div>';
+          return;
+        }
+        body.innerHTML = tips.map(tip => {
+          const dc = tip.direction === 'BUY' ? 'var(--emerald)' : tip.direction === 'SELL' ? 'var(--rose)' : 'var(--amber)';
+          const rem = Math.floor((new Date(tip.expiry_time) - Date.now()) / 1000);
+          const remStr = rem > 0 ? `${Math.floor(rem/60)}:${String(rem%60).padStart(2,'0')}` : '⏰';
+          const remCol = rem < 60 ? 'var(--rose)' : rem < 180 ? 'var(--amber)' : 'var(--sky)';
+          return `<div style="background:var(--card2);border:1px solid var(--line2);border-radius:6px;padding:7px 10px;font-size:11px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+              <span style="font-weight:700;color:var(--text)">${tip.symbol}</span>
+              <span style="color:var(--sky)">${tip.timeframe}</span>
+              <span style="color:${dc};font-weight:700">${tip.direction}</span>
+              <span style="color:${remCol};font-family:var(--font-mono)">${remStr}</span>
+            </div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${tip.instrument || '—'}</div>
+            <div style="display:flex;gap:10px;font-family:var(--font-mono);">
+              <span>Entry <span style="color:var(--sky)">₹${tip.entry ?? '—'}</span></span>
+              <span>Tgt <span style="color:var(--emerald)">₹${tip.target ?? '—'}</span></span>
+              <span>SL <span style="color:var(--rose)">₹${tip.sl ?? '—'}</span></span>
+            </div>
+          </div>`;
+        }).join('');
+      } catch {
+        if (body) body.innerHTML = '<div style="font-size:11px;color:var(--dim);text-align:center;padding:10px 0;">Unavailable</div>';
+      }
+    }
+
     async function loadLog() {
       const sym = document.getElementById('logSym')?.value || '';
       const tf = document.getElementById('logTF')?.value || '';
@@ -2748,6 +2796,7 @@
           const pnlC = tip.pnl_pct > 0 ? 'var(--emerald)' : tip.pnl_pct < 0 ? 'var(--rose)' : 'var(--dim)';
           const dc = tip.direction === 'BUY' ? 'var(--emerald)' : tip.direction === 'SELL' ? 'var(--rose)' : 'var(--amber)';
           const outCol = tip.outcome === 'WIN' ? 'var(--emerald)' : tip.outcome === 'LOSS' ? 'var(--rose)' : tip.outcome === 'EXPIRED' ? 'var(--amber)' : 'var(--dim)';
+          const outLabel = tip.outcome === 'WIN' ? '✓ TARGET HIT' : tip.outcome === 'LOSS' ? '✗ STOPPED OUT' : tip.outcome === 'EXPIRED' ? '⏰ EXPIRED' : '⏳ ACTIVE';
           return `<tr>
         <td class="mono dim" style="font-size:10px;white-space:nowrap">${fmtIST(tip.created_at)}</td>
         <td style="font-weight:700;color:var(--text)">${tip.symbol}</td>
@@ -2761,7 +2810,7 @@
         <td class="mono" style="color:${(tip.score || 0) > 0 ? 'var(--emerald)' : (tip.score || 0) < 0 ? 'var(--rose)' : 'var(--amber)'}">${(tip.score || 0) >= 0 ? '+' : ''}${(tip.score || 0).toFixed(1)}</td>
         <td class="mono dim">₹${tip.spot_at_tip ?? '—'}</td>
         <td class="mono" style="font-size:10px">${remStr(tip.expiry_time, tip.outcome)}</td>
-        <td><span style="background:${outCol}22;color:${outCol};border:1px solid ${outCol}44;padding:2px 7px;border-radius:3px;font-size:10px;font-weight:700;white-space:nowrap">${tip.outcome || 'PENDING'}</span></td>
+        <td><span style="background:${outCol}22;color:${outCol};border:1px solid ${outCol}44;padding:2px 7px;border-radius:3px;font-size:10px;font-weight:700;white-space:nowrap">${outLabel}</span></td>
         <td class="mono dim">${tip.exit_price ? '₹' + tip.exit_price : '—'}</td>
         <td class="mono" style="color:${pnlC}">${tip.pnl_pct != null ? (tip.pnl_pct >= 0 ? '+' : '') + tip.pnl_pct.toFixed(1) + '%' : '—'}</td>
         <td style="white-space:nowrap">
@@ -2840,6 +2889,10 @@
       document.getElementById('tab-' + id).classList.add('active');
       document.querySelector(`[data-tab="${id}"]`).classList.add('active');
       if (logRefT) { clearInterval(logRefT); logRefT = null; }
+      if (id === 'live') {
+        loadLiveTips();
+        logRefT = setInterval(loadLiveTips, 10000);  // refresh locked tips every 10s
+      }
       if (id === 'log') {
         // Sync TF filter to currently selected frame on open
         const tfSel = document.getElementById('logTF');
@@ -3053,6 +3106,8 @@
       // Sync demo toggle state with server on load
       fetch('/api/status').then(r => r.json()).then(d => { if (d.demo_mode) applyDemoUI(true); }).catch(() => { });
       connectSSE();
+      loadLiveTips();
+      logRefT = setInterval(loadLiveTips, 10000);  // keep locked tips panel fresh
       window.addEventListener('resize', () => { if (live[cSym]) { drawPriceChart(); drawOIChart(); } });
       // After 30s, if SSE is live but no ticks arrived, show a warning
       setTimeout(() => {
