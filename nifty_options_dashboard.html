@@ -2038,7 +2038,7 @@
     function connectSSE() {
       try {
         if (evtSrc) evtSrc.close();
-        evtSrc = new EventSource('https://pykt.in/stream');
+        evtSrc = new EventSource('/stream');
         evtSrc.onopen = () => {
           isLive = true;
           if (!_demoMode) { const p = document.getElementById('connPill'); p.textContent = '⬤ LIVE'; p.className = 'conn-pill live'; }
@@ -2335,10 +2335,10 @@
       }
       // auto-post outcome to server if live
       if (isLive) {
-        fetch(`https://pykt.in/api/accuracy`).then(r => r.json()).then(d => {
+        fetch(`/api/accuracy`).then(r => r.json()).then(d => {
           const match = d.tips?.find(t => t.instrument === tip.instrument && t.outcome === 'PENDING');
-          if (match && won) fetch(`https://pykt.in/api/tip/${match.id}/outcome`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outcome: 'WIN', exit_price: cur }) }).catch(() => { });
-          else if (match && lost) fetch(`https://pykt.in/api/tip/${match.id}/outcome`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outcome: 'LOSS', exit_price: cur }) }).catch(() => { });
+          if (match && won) fetch(`/api/tip/${match.id}/outcome`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outcome: 'WIN', exit_price: cur }) }).catch(() => { });
+          else if (match && lost) fetch(`/api/tip/${match.id}/outcome`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outcome: 'LOSS', exit_price: cur }) }).catch(() => { });
         }).catch(() => { });
       }
     }
@@ -2731,7 +2731,7 @@
       }
 
       try {
-        const r = await fetch(`https://pykt.in/api/accuracy?mode=${mode}&days=${days}`);
+        const r = await fetch(`/api/accuracy?mode=${mode}&days=${days}`);
         if (!r.ok) throw new Error(r.status);
         const d = await r.json();
         let rows = d.tips || [];
@@ -2773,7 +2773,7 @@
     async function markOutcome(id, outcome) {
       const exit = parseFloat(prompt(`Enter exit price for ${outcome}:`, '0') || '0');
       try {
-        const r = await fetch(`https://pykt.in/api/tip/${id}/outcome`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outcome, exit_price: exit }) });
+        const r = await fetch(`/api/tip/${id}/outcome`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outcome, exit_price: exit }) });
         const d = await r.json();
         alert(`Marked ${outcome}  ·  P&L: ${d.pnl_pct >= 0 ? '+' : ''}${d.pnl_pct}%`);
         loadLog(); loadAccuracy();
@@ -2782,7 +2782,7 @@
 
     async function loadAccuracy() {
       try {
-        const r = await fetch('https://pykt.in/api/accuracy');
+        const r = await fetch('/api/accuracy');
         const d = await r.json();
         const stats = d.accuracy || [];
         document.getElementById('accCards').innerHTML = stats.length ? stats.map(s => {
@@ -2804,7 +2804,7 @@
 
     async function loadWeights() {
       try {
-        const r = await fetch('https://pykt.in/api/weights');
+        const r = await fetch('/api/weights');
         const d = await r.json();
         const maxW = 5; let html = '';
         for (const [sym, tfs] of Object.entries(d)) {
@@ -2993,7 +2993,7 @@
       applyDemoUI(wantDemo);
       _heroSigKey = null;
       // Sync server state in background
-      fetch('https://pykt.in/api/demo/toggle', { method: 'POST' })
+      fetch('/api/demo/toggle', { method: 'POST' })
         .then(r => {
           if (!r.ok) throw new Error('HTTP ' + r.status);
           return r.json();
@@ -3021,7 +3021,7 @@
       if (btn) { btn.textContent = '↻ …'; btn.disabled = true; }
       const restore = () => { if (btn) { btn.textContent = '↻ Refresh'; btn.disabled = false; } };
       // Only fetch snapshot for current symbol — SSE keeps the other in sync
-      fetch(`https://pykt.in/api/snapshot/${cSym}`)
+      fetch(`/api/snapshot/${cSym}`)
         .then(r => {
           if (r.status === 503) {
             // Server is up but no data yet — SSE will deliver it shortly, just reconnect
@@ -3046,13 +3046,13 @@
     function init() {
       setInterval(clockTick, 1000); clockTick();
       // Sync demo toggle state with server on load
-      fetch('https://pykt.in/api/status').then(r => r.json()).then(d => { if (d.demo_mode) applyDemoUI(true); }).catch(() => { });
+      fetch('/api/status').then(r => r.json()).then(d => { if (d.demo_mode) applyDemoUI(true); }).catch(() => { });
       connectSSE();
       window.addEventListener('resize', () => { if (live[cSym]) { drawPriceChart(); drawOIChart(); } });
       // After 12s, if SSE is live but no ticks arrived, show NSE-block warning
       setTimeout(() => {
         if (isLive && ticks === 0) {
-          fetch('https://pykt.in/api/debug').then(r => r.json()).then(d => {
+          fetch('/api/debug').then(r => r.json()).then(d => {
             const errs = Object.entries(d.symbols || {}).filter(([, v]) => v.last_error).map(([k, v]) => `${k}: ${v.last_error}`);
             const msg = errs.length ? errs.join(' | ') : 'NSE API not responding — cookies may be blocked. Restart server and try again.';
             const el = document.getElementById('lastTick');
