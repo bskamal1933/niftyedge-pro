@@ -1433,8 +1433,10 @@ def home():
 @app.route("/api/status")
 def api_status():
     _ensure_poll_running()  # auto-restart if thread died
+    sess = _market_session()
     return jsonify({"status":"ok","version":"3.0","time_ist":ist_now().strftime("%H:%M:%S"),
-                    "subscribers":len(subscribers),"demo_mode":_demo_mode})
+                    "subscribers":len(subscribers),"demo_mode":_demo_mode,
+                    "market_status": sess["status"]})
 
 @app.route("/api/demo/toggle", methods=["POST"])
 def demo_toggle():
