@@ -320,6 +320,10 @@ def resolve_pending_tips(current_prices: dict):
             update_accuracy_stats(c, sym, str(tf_mins)+'m', direction, outcome, pnl_pct or 0)
             if outcome in ('WIN', 'LOSS'):
                 adapt_weights(sym, tf_mins, outcome, pnl_pct or 0, c)
+            # Remove from active signals so the next fire creates a fresh locked tip
+            sig_key = (sym, tf_mins)
+            if _active_signals.get(sig_key, {}).get("db_id") == tip_id:
+                _active_signals.pop(sig_key, None)
 
     conn.commit(); conn.close()
 
@@ -832,8 +836,25 @@ def make_tip(sym, tf_mins, analysis):
     else:
         expiry_at = (now_utc + timedelta(minutes=tf_mins)).isoformat()
 
-    # Track all directions (including NEUTRAL) so expiry_at stays stable between polls
-    _active_signals[sig_key] = {"direction": direction, "expiry_at": expiry_at}
+    # Lock entry/target/sl/rr on first fire; reuse for continuations so values never drift
+    is_continuation = (expiry_at == prev_sig.get("expiry_at") and prev_sig.get("entry"))
+    if is_continuation:
+        ltp    = prev_sig["entry"]
+        target = prev_sig["target"]
+        sl     = prev_sig["sl"]
+        rr     = prev_sig["rr"]
+        # Recompute rr in case of float drift (should be identical)
+        rr = round((target - ltp) / (ltp - sl), 2) if ltp > sl else 0
+
+    _active_signals[sig_key] = {
+        "direction": direction,
+        "expiry_at": expiry_at,
+        "entry":     round(ltp, 1),
+        "target":    target,
+        "sl":        sl,
+        "rr":        rr,
+        "db_id":     prev_sig.get("db_id"),  # preserve DB row id across polls
+    }
 
     nse_sym   = nse_symbol(sym, opt_strike, opt_type)
     disp      = display_instrument(sym, opt_strike, opt_type)
@@ -1362,14 +1383,24 @@ def poll_loop():
                 tips = {str(tf): make_tip(sym, tf, analysis) for tf in CANDLE_MINS}
 
                 src = analysis.get("source", "nse")
-                if src in ("demo", "sample"):
-                    for tf, tip in tips.items():
-                        if tip["direction"] != "NEUTRAL":
-                            log_tip(tip, notes="SAMPLE")
-                elif src != "yahoo_fallback":
-                    for tf, tip in tips.items():
-                        if tip["direction"] != "NEUTRAL" and int(tf) >= 10:
-                            log_tip(tip)
+                for tf_str, tip in tips.items():
+                    tf_int = int(tf_str)
+                    if tip["direction"] == "NEUTRAL":
+                        continue
+                    sig_key = (sym, tf_int)
+                    sig_data = _active_signals.get(sig_key, {})
+                    if sig_data.get("db_id"):
+                        continue  # already logged this active signal
+                    if src in ("demo", "sample"):
+                        row_id = log_tip(tip, notes="SAMPLE")
+                    elif src == "yahoo_fallback":
+                        continue
+                    else:
+                        if tf_int < 10:
+                            continue
+                        row_id = log_tip(tip)
+                    if row_id and sig_key in _active_signals:
+                        _active_signals[sig_key]["db_id"] = row_id
 
                 payload = {
                     "type": "update", "symbol": sym, "analysis": analysis, "tips": tips,
@@ -1476,6 +1507,23 @@ def diagnose():
         spot = fetch_spot_yahoo(sym)
         result["yahoo"][sym] = {"spot": spot, "ok": spot is not None}
     return jsonify(result)
+
+@app.route("/api/live-tips")
+def live_tips():
+    """Return all PENDING tips from DB (locked entry/target/sl once fired)."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    rows = c.execute(
+        "SELECT id,symbol,timeframe,tf_mins,direction,instrument,strike,opt_type,"
+        "entry,target,sl,rr,confidence,score,spot_at_tip,pcr,iv,rationale,"
+        "created_at,expiry_time,notes FROM tips WHERE outcome='PENDING' ORDER BY created_at DESC"
+    ).fetchall()
+    conn.close()
+    cols = ['id','symbol','timeframe','tf_mins','direction','instrument','strike','opt_type',
+            'entry','target','sl','rr','confidence','score','spot_at_tip','pcr','iv',
+            'rationale','created_at','expiry_time','notes']
+    tips = [dict(zip(cols, r)) for r in rows]
+    return jsonify({"live_tips": tips, "count": len(tips)})
 
 @app.route("/api/accuracy")
 def accuracy():
