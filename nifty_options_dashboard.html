@@ -356,6 +356,33 @@
       border-bottom-color: var(--sky);
     }
 
+    .subbar-select {
+      background: var(--ink2);
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--sky);
+      padding: 0 10px;
+      font-family: var(--font-body);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: .4px;
+      cursor: pointer;
+      outline: none;
+      height: 100%;
+      align-self: stretch;
+      transition: border-color .2s, color .2s;
+    }
+
+    .subbar-select:focus, .subbar-select:hover {
+      border-bottom-color: var(--sky);
+    }
+
+    .subbar-select option {
+      background: var(--ink3);
+      color: var(--text);
+      font-weight: 500;
+    }
+
     .subbar-sep {
       width: 1px;
       background: var(--line);
@@ -1699,21 +1726,22 @@
     </div>
 
     <div class="subbar">
-      <button class="tab-btn active" data-tab="live" onclick="showTab('live')">Live Tips</button>
-      <button class="tab-btn" data-tab="chain" onclick="showTab('chain')">OI Chain</button>
-      <button class="tab-btn" data-tab="log" onclick="showTab('log')">Tip Log</button>
-      <button class="tab-btn" data-tab="acc" onclick="showTab('acc')">Accuracy</button>
-      <button class="tab-btn" data-tab="wts" onclick="showTab('wts')">Weights</button>
+      <select class="subbar-select" id="tabSelect" onchange="showTab(this.value)">
+        <option value="live">Live Tips</option>
+        <option value="chain">OI Chain</option>
+        <option value="log">Tip Log</option>
+        <option value="acc">Accuracy</option>
+        <option value="wts">Weights</option>
+      </select>
       <div class="subbar-sep"></div>
-      <div class="tf-group">
-        <span class="tf-label">Frame</span>
-        <button class="tf-btn" id="tfb1" data-tf="1" onclick="setTF(1)">1M</button>
-        <button class="tf-btn active" id="tfb10" data-tf="10" onclick="setTF(10)">10M</button>
-        <button class="tf-btn" id="tfb20" data-tf="20" onclick="setTF(20)">20M</button>
-        <button class="tf-btn" id="tfb30" data-tf="30" onclick="setTF(30)">30M</button>
-        <button class="tf-btn" id="tfb60" data-tf="60" onclick="setTF(60)">1H</button>
-        <button class="tf-btn" id="tfb180" data-tf="180" onclick="setTF(180)">3H</button>
-      </div>
+      <select class="subbar-select" id="tfSelect" onchange="setTF(+this.value)">
+        <option value="1">Frame: 1M</option>
+        <option value="10" selected>Frame: 10M</option>
+        <option value="20">Frame: 20M</option>
+        <option value="30">Frame: 30M</option>
+        <option value="60">Frame: 1H</option>
+        <option value="180">Frame: 3H</option>
+      </select>
       <div class="subbar-right">
         <div class="live-tick">Updated: <strong id="lastTick">—</strong></div>
         <div class="mode-switch" title="Live NSE data ↔ Sample synthetic data">
@@ -2108,11 +2136,14 @@
         const wasOpen = _marketOpen;
         _marketOpen = (mst === 'OPEN');
         if (_marketOpen !== wasOpen) {
-          // Market just opened → force LIVE mode; market just closed → allow SAMPLE
-          if (_marketOpen && _demoMode) setDataMode(false);
           updateModeControls();
-          _heroSigKey = null;  // force hero re-render with new market state
+          _heroSigKey = null;
         }
+      }
+      // Auto-revert SAMPLE → LIVE only when real NSE chain data arrives
+      // (not on synthetic/demo — lets local dev stay in SAMPLE when NSE is blocked)
+      if (_demoMode && d.analysis.source === 'nse') {
+        setDataMode(false);
       }
 
       if (s === cSym) renderLive();
@@ -2913,9 +2944,9 @@
     ════════════════════════ */
     function showTab(id) {
       document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
       document.getElementById('tab-' + id).classList.add('active');
-      document.querySelector(`[data-tab="${id}"]`).classList.add('active');
+      const sel = document.getElementById('tabSelect');
+      if (sel && sel.value !== id) sel.value = id;
       if (logRefT) { clearInterval(logRefT); logRefT = null; }
       if (id === 'live') {
         loadLiveTips();
@@ -2935,7 +2966,8 @@
 
     function setTF(tf) {
       cTF = tf; _heroSigKey = null;
-      document.querySelectorAll('.tf-btn').forEach(b => b.classList.toggle('active', +b.dataset.tf === tf));
+      const sel = document.getElementById('tfSelect');
+      if (sel && +sel.value !== tf) sel.value = String(tf);
       renderLive();
     }
 
@@ -2957,13 +2989,15 @@
 
     function decorateTFBtns(sym) {
       if (sym !== cSym) return;
+      const sel = document.getElementById('tfSelect');
+      if (!sel) return;
+      const labelMap = {1:'1M',10:'10M',20:'20M',30:'30M',60:'1H',180:'3H'};
       TFs.forEach(tf => {
-        const t = tips_[sym]?.[String(tf)]; const btn = document.getElementById('tfb' + tf);
-        if (!btn || !t) return;
-        let dot = btn.querySelector('.tf-dir-dot');
-        if (!dot) { dot = document.createElement('span'); dot.className = 'tf-dir-dot'; btn.appendChild(dot); }
-        dot.className = 'tf-dir-dot ' + (t.direction === 'BUY' ? 'dot-buy' : t.direction === 'SELL' ? 'dot-sell' : 'dot-neu');
-        dot.textContent = t.direction === 'BUY' ? '▲' : t.direction === 'SELL' ? '▼' : '—';
+        const t = tips_[sym]?.[String(tf)];
+        const opt = sel.querySelector(`option[value="${tf}"]`);
+        if (!opt) return;
+        const arrow = !t ? '' : t.direction === 'BUY' ? ' ▲' : t.direction === 'SELL' ? ' ▼' : '';
+        opt.textContent = `Frame: ${labelMap[tf]}${arrow}`;
       });
     }
 
@@ -3077,35 +3111,21 @@
     }
 
     function updateModeControls() {
+      // Visual hint only — toggle stays clickable; auto-revert handles live enforcement
       const track = document.getElementById('msTrack');
       const lblSample = document.getElementById('msLblSample');
-      const lblLive = document.getElementById('msLblLive');
-      const locked = _marketOpen && !_demoMode;  // market open + live → lock SAMPLE out
-      if (track) {
-        track.style.opacity = locked ? '0.35' : '';
-        track.style.cursor  = locked ? 'not-allowed' : '';
-        track.style.pointerEvents = locked ? 'none' : '';
+      if (_marketOpen && !_demoMode) {
+        if (lblSample) { lblSample.style.opacity = '0.55'; lblSample.title = 'Market open — SAMPLE auto-reverts when live NSE data arrives'; }
+      } else {
+        if (lblSample) { lblSample.style.opacity = ''; lblSample.title = ''; }
       }
-      if (lblSample) {
-        lblSample.style.opacity = locked ? '0.35' : '';
-        lblSample.style.cursor  = locked ? 'not-allowed' : '';
-        lblSample.style.pointerEvents = locked ? 'none' : '';
-      }
+      if (track) { track.style.opacity = ''; track.style.cursor = ''; track.style.pointerEvents = ''; }
     }
 
     function toggleDataMode() { setDataMode(!_demoMode); }
 
     function setDataMode(wantDemo) {
       if (_demoMode === wantDemo) return;
-      // Block switching to SAMPLE while market is open
-      if (wantDemo && _marketOpen) {
-        const t = document.createElement('div');
-        t.style.cssText = 'position:fixed;bottom:40px;left:50%;transform:translateX(-50%);background:#f59e0b18;border:1px solid #f59e0b66;color:#f59e0b;padding:7px 20px;border-radius:6px;font-size:12px;z-index:999;pointer-events:none;';
-        t.textContent = 'Sample mode is only available when market is closed.';
-        document.body.appendChild(t);
-        setTimeout(() => t.remove(), 3000);
-        return;
-      }
       // Optimistic: update UI immediately — don't wait for server round-trip
       applyDemoUI(wantDemo);
       _heroSigKey = null;
