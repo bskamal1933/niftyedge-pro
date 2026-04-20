@@ -1929,6 +1929,26 @@
             <button class="action-btn" onclick="loadLog()">↻ Refresh</button>
           </div>
         </div>
+        <!-- Hit/Miss ratio bar -->
+        <div id="logRatioBar" style="display:none;background:var(--ink2);border:1px solid var(--line);border-radius:6px;padding:10px 16px;flex-shrink:0;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <div style="display:flex;gap:20px;font-size:12px;">
+              <span id="ratioHitLbl" style="color:var(--emerald);font-weight:700;font-family:var(--font-mono)">— HIT</span>
+              <span id="ratioMissLbl" style="color:var(--rose);font-weight:700;font-family:var(--font-mono)">— MISSED</span>
+              <span id="ratioExpLbl" style="color:var(--amber);font-weight:700;font-family:var(--font-mono)">— EXPIRED</span>
+              <span id="ratioPendLbl" style="color:var(--dim);font-weight:700;font-family:var(--font-mono)">— ACTIVE</span>
+            </div>
+            <div id="ratioHitPct" style="font-size:18px;font-weight:800;font-family:var(--font-mono);color:var(--emerald)">—%</div>
+          </div>
+          <div style="height:8px;border-radius:4px;background:var(--ink3);overflow:hidden;display:flex;gap:1px;">
+            <div id="ratioBarHit"  style="height:100%;background:var(--emerald);transition:width .4s;width:0%"></div>
+            <div id="ratioBarMiss" style="height:100%;background:var(--rose);transition:width .4s;width:0%"></div>
+            <div id="ratioBarExp"  style="height:100%;background:var(--amber);transition:width .4s;width:0%"></div>
+            <div id="ratioBarPend" style="height:100%;background:var(--line2);transition:width .4s;width:0%"></div>
+          </div>
+          <div style="font-size:10px;color:var(--muted);margin-top:5px;" id="ratioSubtitle">Hit probability based on resolved tips</div>
+        </div>
+
         <div class="card" style="flex:1;overflow:hidden;">
           <div class="card-body no-pad scroll">
             <table class="log-table">
@@ -2375,6 +2395,7 @@
     }
 
     function autoResolveHero(tip) {
+      if (_demoMode) return;  // synthetic LTP not comparable to locked entry
       const a = live[cSym]; if (!a) return;
       const rec = a.records?.find(r => r.strikePrice === tip.strike);
       const cur = (rec?.[tip.opt_type]?.lastPrice) || 0;
@@ -2440,10 +2461,12 @@
       const cC = tip.confidence >= 75 ? 'var(--emerald)' : tip.confidence >= 58 ? 'var(--amber)' : 'var(--rose)';
       const sc = +tip.score; const scPct = Math.min(100, Math.max(0, (sc + 14) / 28 * 100));
       const scC = sc > 0 ? 'var(--emerald)' : sc < 0 ? 'var(--rose)' : 'var(--amber)';
-      const curLTP = getLiveLTP(tip);
+      // In SAMPLE mode, LTP comes from synthetic chain — meaningless vs locked entry; hide P&L
+      const curLTP = _demoMode ? null : getLiveLTP(tip);
       const pnlPct = curLTP && tip.entry ? ((curLTP - tip.entry) / tip.entry * 100).toFixed(1) : null;
       const pnlColor = pnlPct > 0 ? 'var(--emerald)' : pnlPct < 0 ? 'var(--rose)' : 'var(--dim)';
       const nse = tip.nse_symbol || tip.instrument || '—';
+      const instrLabel = _demoMode ? `[SAMPLE] ${tip.instrument || nse}` : (tip.instrument || nse);
       el.innerHTML = `
   <div class="tip-hero ${cls}">
     <div class="tip-row1">
@@ -2453,8 +2476,8 @@
         <div class="tip-tf-badge">${tip.timeframe}</div>
       </div>
     </div>
-    <div class="tip-instrument">${tip.instrument || nse}</div>
-    <div style="font-family:var(--font-mono);font-size:9px;color:var(--muted);margin:-4px 0 8px;letter-spacing:.5px;">${nse}</div>
+    <div class="tip-instrument">${instrLabel}</div>
+    <div style="font-family:var(--font-mono);font-size:9px;color:var(--muted);margin:-4px 0 8px;letter-spacing:.5px;">${_demoMode ? 'SYNTHETIC — not a real signal' : nse}</div>
     <div id="tipStatus" style="display:none;padding:6px 10px;border-radius:4px;font-size:11px;font-weight:700;margin-bottom:8px;"></div>
     <div class="price-grid">
       <div class="price-box"><div class="pb-label">Entry</div><div class="pb-value pb-entry">₹${tip.entry}</div></div>
@@ -2520,7 +2543,7 @@
         <span class="tf-name">${tip.timeframe}</span>
         <span class="dir-pill ${dpill}">${tip.direction}</span>
       </div>
-      <div style="font-size:9px;font-family:var(--font-mono);color:var(--muted);margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${tip.nse_symbol || tip.instrument || '—'}</div>
+      <div style="font-size:9px;font-family:var(--font-mono);color:var(--muted);margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_demoMode ? '[SAMPLE]' : (tip.nse_symbol || tip.instrument || '—')}</div>
       <div class="tf-card-levels">
         <div class="tl-box"><div class="tl-lbl">Entry</div><div class="tl-val" style="color:var(--sky)">₹${tip.entry}</div></div>
         <div class="tl-box"><div class="tl-lbl">Target</div><div class="tl-val" style="color:var(--emerald)">₹${tip.target}</div></div>
@@ -2850,6 +2873,40 @@
         if (sym) rows = rows.filter(x => x.symbol === sym);
         if (tf) rows = rows.filter(x => String(x.tf_mins) === tf);
         if (oc) rows = rows.filter(x => x.outcome === oc);
+
+        // ── Ratio bar (computed before outcome filter so totals are unfiltered by outcome) ──
+        {
+          const allRows = d.tips.filter(x =>
+            (!sym || x.symbol === sym) && (!tf || String(x.tf_mins) === tf)
+          );
+          const hits    = allRows.filter(x => x.outcome === 'WIN').length;
+          const misses  = allRows.filter(x => x.outcome === 'LOSS').length;
+          const expired = allRows.filter(x => x.outcome === 'EXPIRED').length;
+          const pending = allRows.filter(x => x.outcome === 'PENDING').length;
+          const resolved = hits + misses + expired;
+          const total    = resolved + pending;
+          const bar = document.getElementById('logRatioBar');
+          if (bar) {
+            bar.style.display = total ? 'block' : 'none';
+            const hitPct  = total ? (hits    / total * 100) : 0;
+            const missPct = total ? (misses  / total * 100) : 0;
+            const expPct  = total ? (expired / total * 100) : 0;
+            const pendPct = total ? (pending / total * 100) : 0;
+            const hitRate = resolved ? Math.round(hits / resolved * 100) : null;
+            document.getElementById('ratioHitLbl').textContent  = `${hits} HIT`;
+            document.getElementById('ratioMissLbl').textContent = `${misses} MISSED`;
+            document.getElementById('ratioExpLbl').textContent  = `${expired} EXPIRED`;
+            document.getElementById('ratioPendLbl').textContent = `${pending} ACTIVE`;
+            document.getElementById('ratioHitPct').textContent  = hitRate != null ? `${hitRate}%` : '—%';
+            document.getElementById('ratioHitPct').style.color  = hitRate >= 60 ? 'var(--emerald)' : hitRate >= 40 ? 'var(--amber)' : 'var(--rose)';
+            document.getElementById('ratioBarHit').style.width  = hitPct  + '%';
+            document.getElementById('ratioBarMiss').style.width = missPct + '%';
+            document.getElementById('ratioBarExp').style.width  = expPct  + '%';
+            document.getElementById('ratioBarPend').style.width = pendPct + '%';
+            document.getElementById('ratioSubtitle').textContent =
+              resolved ? `Hit rate ${hitRate}% across ${resolved} resolved tip${resolved !== 1 ? 's' : ''} · ${pending} still active` : `${pending} tip${pending !== 1 ? 's' : ''} active — no resolved tips yet`;
+          }
+        }
 
         document.getElementById('logBody').innerHTML = rows.length ? rows.map(tip => {
           const pnlC = tip.pnl_pct > 0 ? 'var(--emerald)' : tip.pnl_pct < 0 ? 'var(--rose)' : 'var(--dim)';
