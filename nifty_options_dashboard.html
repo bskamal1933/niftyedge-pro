@@ -2375,6 +2375,7 @@
     }
 
     function autoResolveHero(tip) {
+      if (_demoMode) return;  // synthetic LTP not comparable to locked entry
       const a = live[cSym]; if (!a) return;
       const rec = a.records?.find(r => r.strikePrice === tip.strike);
       const cur = (rec?.[tip.opt_type]?.lastPrice) || 0;
@@ -2440,7 +2441,8 @@
       const cC = tip.confidence >= 75 ? 'var(--emerald)' : tip.confidence >= 58 ? 'var(--amber)' : 'var(--rose)';
       const sc = +tip.score; const scPct = Math.min(100, Math.max(0, (sc + 14) / 28 * 100));
       const scC = sc > 0 ? 'var(--emerald)' : sc < 0 ? 'var(--rose)' : 'var(--amber)';
-      const curLTP = getLiveLTP(tip);
+      // In SAMPLE mode, LTP comes from synthetic chain — meaningless vs locked entry; hide P&L
+      const curLTP = _demoMode ? null : getLiveLTP(tip);
       const pnlPct = curLTP && tip.entry ? ((curLTP - tip.entry) / tip.entry * 100).toFixed(1) : null;
       const pnlColor = pnlPct > 0 ? 'var(--emerald)' : pnlPct < 0 ? 'var(--rose)' : 'var(--dim)';
       const nse = tip.nse_symbol || tip.instrument || '—';
