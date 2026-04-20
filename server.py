@@ -170,6 +170,7 @@ _demo_prices  = {'NIFTY': 24200.0, 'BANKNIFTY': 52000.0}
 _demo_trend   = {'NIFTY': 1, 'BANKNIFTY': 1}     # +1 up, -1 down
 _demo_ticks   = {'NIFTY': 0, 'BANKNIFTY': 0}      # poll counter per symbol
 _demo_regime  = {'NIFTY': 'bull', 'BANKNIFTY': 'bull'}  # 'bull' | 'bear'
+_demo_seeded  = {'NIFTY': False, 'BANKNIFTY': False}  # price seeded from cache?
 _REGIME_FLIP_EVERY = 25  # polls (~75 s) before flipping regime
 
 # ── Database ──────────────────────────────────────────────────────────────────
@@ -1344,15 +1345,16 @@ def poll_loop():
         for sym in SYMBOLS:
             try:
                 if _demo_mode:
-                    analysis = load_sample_analysis(sym)
-                    if analysis is None:
-                        analysis = make_demo_analysis(sym)
-                        _sample_src = 'synthetic'
-                    else:
-                        _sample_src = f"{analysis.get('data_label','?')} {analysis.get('display_date','')}"
+                    # Seed price walk from cached snapshot once so demo starts at a realistic price
+                    if not _demo_seeded[sym]:
+                        cached = load_sample_analysis(sym)
+                        if cached and cached.get('spot'):
+                            _demo_prices[sym] = float(cached['spot'])
+                        _demo_seeded[sym] = True
+                    # Always use make_demo_analysis so spot animates every tick
+                    analysis = make_demo_analysis(sym)
                     if _src.get(sym) != 'sample':
-                        mst = analysis.get('market_status', '')
-                        print(f"  [{_ts()}] [SAMPLE] {sym}: {_sample_src} ({mst})")
+                        print(f"  [{_ts()}] [SAMPLE] {sym}: demo @ {_demo_prices[sym]:.0f}")
                         _src[sym] = 'sample'
 
                 elif (raw := fetch_chain(sym)):
@@ -1440,9 +1442,11 @@ def api_status():
 
 @app.route("/api/demo/toggle", methods=["POST"])
 def demo_toggle():
-    global _demo_mode, _active_signals
+    global _demo_mode, _active_signals, _demo_seeded
     _demo_mode = not _demo_mode
     _active_signals.clear()
+    # Reset so price walk re-seeds from latest cache on next entry into demo mode
+    _demo_seeded = {sym: False for sym in SYMBOLS}
     label = "SAMPLE" if _demo_mode else "LIVE"
     try:
         print(f"  [{_ts()}] Demo mode -> {label}")
