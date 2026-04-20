@@ -1743,6 +1743,7 @@
         <option value="180">Frame: 3H</option>
       </select>
       <div class="subbar-right">
+        <span id="envBadge" style="font-size:10px;font-weight:700;letter-spacing:.5px;color:var(--dim);opacity:.7;">—</span>
         <div class="live-tick">Updated: <strong id="lastTick">—</strong></div>
         <div class="mode-switch" title="Live NSE data ↔ Sample synthetic data">
           <span class="ms-lbl ms-live" id="msLblLive" onclick="setDataMode(false)">LIVE</span>
@@ -3239,12 +3240,19 @@
     ════════════════════════ */
     function init() {
       setInterval(clockTick, 1000); clockTick();
-      // Sync demo toggle state with server on load
+      // Sync state with server on load (env, demo mode, market status)
       fetch('/api/status').then(r => r.json()).then(d => {
-        if (d.demo_mode) applyDemoUI(true);
+        // Always match server's demo_mode (server sets it based on ENV at startup)
+        if (d.demo_mode !== _demoMode) applyDemoUI(d.demo_mode);
         _marketOpen = d.market_status === 'OPEN';
+        // Show env badge so it's obvious which environment is running
+        const envBadge = document.getElementById('envBadge');
+        if (envBadge) {
+          envBadge.textContent = d.is_render ? '☁ RENDER' : '💻 LOCAL';
+          envBadge.style.color = d.is_render ? 'var(--sky)' : 'var(--amber)';
+        }
         updateModeControls();
-        if (!_demoMode) renderLive();  // re-render hero with correct market state
+        renderLive();
       }).catch(() => { });
       connectSSE();
       loadLiveTips();

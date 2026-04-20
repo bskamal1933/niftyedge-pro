@@ -47,17 +47,24 @@ CORS(app)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# ── Environment detection ─────────────────────────────────────────────────────
+# Render.com sets both RENDER=true and PORT; absence of RENDER means local dev.
+IS_RENDER = os.environ.get("RENDER", "").lower() in ("true", "1", "yes")
+ENV       = "production" if IS_RENDER else "development"
+
 # ── Config ────────────────────────────────────────────────────────────────────
 POLL_INTERVAL = 3
 CANDLE_MINS   = [1, 10, 20, 30, 60, 180]
 SYMBOLS       = ['NIFTY', 'BANKNIFTY']
 MAX_CANDLES   = 300
-DB_PATH       = os.environ.get("DB_PATH", os.path.join(BASE_DIR, 'niftyedge_tips.db'))
-CACHE_DIR     = os.environ.get("CACHE_DIR", os.path.join(BASE_DIR, 'cache'))
 
-# Allow overriding public URL / port via environment for deployments (e.g. pykt.in)
-PORT = int(os.environ.get("PORT", "5000"))
+PORT       = int(os.environ.get("PORT", "5000"))
 PUBLIC_URL = os.environ.get("PUBLIC_URL", f"http://localhost:{PORT}")
+DB_PATH    = os.environ.get("DB_PATH",    os.path.join(BASE_DIR, 'niftyedge_tips.db'))
+CACHE_DIR  = os.environ.get("CACHE_DIR",  os.path.join(BASE_DIR, 'cache'))
+
+# HTML file path — always the file sitting next to server.py
+HTML_FILE  = os.path.join(BASE_DIR, 'nifty_options_dashboard.html')
 
 # Market session boundaries (IST)
 _MKT_OPEN  = (9,  15)
@@ -165,7 +172,9 @@ _recovery_active  = False
 _nse_source_label = "requests"   # shown in /api/debug
 
 # Demo / sample-data mode
-_demo_mode    = False
+# Local dev defaults to SAMPLE so data appears immediately (NSE is blocked on most local IPs).
+# Production (Render) defaults to LIVE — NSE fetching is active.
+_demo_mode    = not IS_RENDER
 _demo_prices  = {'NIFTY': 24200.0, 'BANKNIFTY': 52000.0}
 _demo_trend   = {'NIFTY': 1, 'BANKNIFTY': 1}     # +1 up, -1 down
 _demo_ticks   = {'NIFTY': 0, 'BANKNIFTY': 0}      # poll counter per symbol
@@ -1427,18 +1436,24 @@ def poll_loop():
 # ── Routes ─────────────────────────────────────────────────────────────────────
 @app.route("/")
 def home():
-    html = os.path.join(BASE_DIR, 'nifty_options_dashboard.html')
-    if os.path.exists(html):
-        return send_file(html)
-    return jsonify({"status":"NiftyEdge Pro v3","db":DB_PATH})
+    if os.path.exists(HTML_FILE):
+        return send_file(HTML_FILE)
+    return jsonify({"status": "NiftyEdge Pro v3", "env": ENV, "db": DB_PATH})
 
 @app.route("/api/status")
 def api_status():
     _ensure_poll_running()  # auto-restart if thread died
     sess = _market_session()
-    return jsonify({"status":"ok","version":"3.0","time_ist":ist_now().strftime("%H:%M:%S"),
-                    "subscribers":len(subscribers),"demo_mode":_demo_mode,
-                    "market_status": sess["status"]})
+    return jsonify({
+        "status":        "ok",
+        "version":       "3.0",
+        "env":           ENV,
+        "is_render":     IS_RENDER,
+        "time_ist":      ist_now().strftime("%H:%M:%S"),
+        "subscribers":   len(subscribers),
+        "demo_mode":     _demo_mode,
+        "market_status": sess["status"],
+    })
 
 @app.route("/api/demo/toggle", methods=["POST"])
 def demo_toggle():
@@ -1588,56 +1603,82 @@ def stream():
 
 # ── Startup ────────────────────────────────────────────────────────────────────
 def _startup():
+    print(f"\n  [ENV] Running in {ENV.upper()} mode  (IS_RENDER={IS_RENDER})")
+    print(f"  [ENV] Demo mode at startup: {_demo_mode}")
+    print(f"  [ENV] DB  → {DB_PATH}")
+    print(f"  [ENV] Cache → {CACHE_DIR}")
+    print(f"  [ENV] HTML → {HTML_FILE}")
+
+    # Database
     try:
         init_db()
     except Exception as e:
         print(f"  [WARN] DB init failed ({e}) — running without persistence")
-    # Refresh cookies in background — Playwright can hang for 60s+ if NSE blocks
-    # the cloud IP, which would prevent the poll thread from ever starting.
-    threading.Thread(target=refresh_cookies, daemon=True).start()
+
+    # Load saved adaptive weights
     try:
-        conn=sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH)
         for sym in SYMBOLS:
             for tf in CANDLE_MINS:
-                row=conn.execute("SELECT weights FROM weight_history WHERE symbol=? AND tf_mins=? ORDER BY id DESC LIMIT 1",(sym,tf)).fetchone()
+                row = conn.execute(
+                    "SELECT weights FROM weight_history WHERE symbol=? AND tf_mins=? ORDER BY id DESC LIMIT 1",
+                    (sym, tf)
+                ).fetchone()
                 if row:
-                    saved=json.loads(row[0])
-                    adaptive_weights[sym][tf].update(saved)
-                    print(f"  [DB] Loaded weights for {sym} {tf}m")
+                    adaptive_weights[sym][tf].update(json.loads(row[0]))
         conn.close()
-    except: pass
+        print("  [DB] Adaptive weights loaded")
+    except Exception as e:
+        print(f"  [WARN] Could not load weights ({e})")
+
+    # Cookie refresh — run in background so it never blocks the poll thread.
+    # On production Playwright fetches real NSE cookies; locally it gracefully
+    # falls back (Playwright may not be installed or NSE may block the IP).
+    threading.Thread(target=refresh_cookies, daemon=True, name="cookie_refresh").start()
+
+    # Poll loop — always starts immediately regardless of cookie state
     t = threading.Thread(target=poll_loop, daemon=True, name="poll_loop")
     t.start()
-    print(f"  [OK] Poll loop started (thread id={t.ident})")
+    print(f"  [OK] Poll loop started (tid={t.ident})")
+
 
 def _ensure_poll_running():
-    """Start poll thread if not already alive (idempotent)."""
-    import threading as _th
-    if not any(t.name == "poll_loop" and t.is_alive() for t in _th.enumerate()):
+    """Idempotent: restart poll thread if it has died."""
+    if not any(t.name == "poll_loop" and t.is_alive() for t in threading.enumerate()):
         t = threading.Thread(target=poll_loop, daemon=True, name="poll_loop")
         t.start()
-        print(f"  [RESTART] Poll loop restarted (thread id={t.ident})")
+        print(f"  [RESTART] Poll loop restarted (tid={t.ident})")
         return True
     return False
+
 
 @app.route("/api/restart-poll", methods=["POST"])
 def restart_poll():
     restarted = _ensure_poll_running()
-    return jsonify({"restarted": restarted, "msg": "Poll loop restarted" if restarted else "Already running"})
+    return jsonify({"restarted": restarted,
+                    "msg": "Poll loop restarted" if restarted else "Already running"})
 
-# When imported by gunicorn, run startup in the worker process
+
+# ── Entry points ──────────────────────────────────────────────────────────────
+# gunicorn imports the module directly → startup runs at import time
 if __name__ != "__main__":
     _startup()
 
-# ── Main ───────────────────────────────────────────────────────────────────────
-if __name__=="__main__":
-    print(); print("="*58)
-    print("   NiftyEdge Pro v3 — Real-Time + Tip Logger")
-    print("="*58)
+# `python server.py` → local development server
+if __name__ == "__main__":
+    print()
+    print("=" * 60)
+    print("  NiftyEdge Pro v3  —  Local Development Server")
+    print("=" * 60)
     _startup()
-    print(f"\n  [OK] Stream : {PUBLIC_URL}/stream")
-    print(f"  [OK] Accuracy: {PUBLIC_URL}/api/accuracy")
-    print(f"  [OK] DB      : {DB_PATH}")
-    print(f"  Open dashboard.html in Chrome/Edge")
-    print("  Press CTRL+C to stop."); print("="*58); print()
-    app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False, threaded=True)
+    print()
+    print(f"  Dashboard : http://localhost:{PORT}/")
+    print(f"  Status    : http://localhost:{PORT}/api/status")
+    print(f"  Debug     : http://localhost:{PORT}/api/debug")
+    print(f"  Mode      : SAMPLE (demo data — NSE not required locally)")
+    print()
+    print("  Press CTRL+C to stop.")
+    print("=" * 60)
+    print()
+    app.run(host="0.0.0.0", port=PORT, debug=False,
+            use_reloader=False, threaded=True)
