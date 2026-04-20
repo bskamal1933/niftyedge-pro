@@ -2360,8 +2360,13 @@
 
       // Only block on complete data absence (legacy yahoo_fallback stub with no records)
       if (tip.entry == null) {
-        el.innerHTML = '<div class="empty-state" style="height:200px"><div class="es-icon">📡</div><div class="es-text">Awaiting data…</div></div>';
-        rt.style.display = 'none'; if (cdT) { clearInterval(cdT); cdT = null; } _heroSigKey = null; return;
+        const _noDataKey = `${tip.symbol}|${tip.tf_mins}|NODATA`;
+        if (_heroSigKey !== _noDataKey) {
+          el.innerHTML = '<div class="empty-state" style="height:200px"><div class="es-icon">📡</div><div class="es-text">NSE chain unavailable — awaiting option data…</div></div>';
+          rt.style.display = 'none'; if (cdT) { clearInterval(cdT); cdT = null; }
+          _heroSigKey = _noDataKey;
+        }
+        return;
       }
 
       const cls = tip.direction === 'BUY' ? 'buy' : tip.direction === 'SELL' ? 'sell' : 'neutral';

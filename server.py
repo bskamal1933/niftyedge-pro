@@ -813,17 +813,18 @@ def make_tip(sym, tf_mins, analysis):
 
     # Expiry logic:
     # - Same direction within window → preserve expiry_at (no reset mid-signal)
-    # - Expired → clear the slot so next iteration is a genuinely fresh signal (new expiry_at)
-    # - Direction changed / NEUTRAL → always fresh window
+    # - Expired → clear so next iteration is a fresh signal with new expiry_at
+    # - Direction changed → always fresh window
+    # NEUTRAL is treated same as BUY/SELL so its countdown ticks properly
     sig_key = (sym, tf_mins)
     prev_sig = _active_signals.get(sig_key, {})
-    if direction != "NEUTRAL" and prev_sig.get("direction") == direction and prev_sig.get("expiry_at"):
+    if prev_sig.get("direction") == direction and prev_sig.get("expiry_at"):
         try:
             prev_exp = datetime.fromisoformat(prev_sig["expiry_at"])
             if now_utc < prev_exp:
                 expiry_at = prev_sig["expiry_at"]   # still within window — preserve
             else:
-                # Window elapsed — clear so this becomes a fresh signal on next poll
+                # Window elapsed — fresh signal
                 _active_signals.pop(sig_key, None)
                 expiry_at = (now_utc + timedelta(minutes=tf_mins)).isoformat()
         except Exception:
@@ -831,10 +832,8 @@ def make_tip(sym, tf_mins, analysis):
     else:
         expiry_at = (now_utc + timedelta(minutes=tf_mins)).isoformat()
 
-    if direction != "NEUTRAL":
-        _active_signals[sig_key] = {"direction": direction, "expiry_at": expiry_at}
-    else:
-        _active_signals.pop(sig_key, None)
+    # Track all directions (including NEUTRAL) so expiry_at stays stable between polls
+    _active_signals[sig_key] = {"direction": direction, "expiry_at": expiry_at}
 
     nse_sym   = nse_symbol(sym, opt_strike, opt_type)
     disp      = display_instrument(sym, opt_strike, opt_type)
