@@ -36,6 +36,12 @@ try:
 except ImportError:
     _HAS_PLAYWRIGHT = False
 
+try:
+    from curl_cffi import requests as cf_requests
+    _HAS_CURL_CFFI = True
+except ImportError:
+    _HAS_CURL_CFFI = False
+
 app  = Flask(__name__)
 CORS(app)
 
@@ -940,7 +946,21 @@ def _auto_recover():
 def fetch_chain(symbol):
     global _nse_source_label
 
-    # 1. Try nsepython (maintains its own session)
+    url = f"https://www.nseindia.com/api/option-chain-indices?symbol={symbol}"
+
+    # 1. curl_cffi — Chrome TLS fingerprint bypasses Akamai bot detection
+    if _HAS_CURL_CFFI:
+        try:
+            r = cf_requests.get(url, headers=NSE_HEADERS, impersonate="chrome120", timeout=12)
+            if r.status_code == 200 and "json" in r.headers.get("Content-Type", ""):
+                _last_nse_error.pop(symbol, None)
+                _nse_fail_counts[symbol] = 0
+                _nse_source_label = "curl_cffi"
+                return r.json()
+        except Exception as e:
+            _last_nse_error[symbol] = f"curl_cffi: {e}"
+
+    # 2. nsepython (maintains its own session)
     if _HAS_NSEPY:
         try:
             data = _nse_scrapper(symbol)
@@ -952,8 +972,7 @@ def fetch_chain(symbol):
         except Exception as e:
             _last_nse_error[symbol] = f"nsepython: {e}"
 
-    # 2. Direct session request
-    url = f"https://www.nseindia.com/api/option-chain-indices?symbol={symbol}"
+    # 3. Direct session request (playwright-refreshed cookies)
     try:
         r = session.get(url, headers=NSE_HEADERS, timeout=10)
         if r.status_code in (401, 403, 429):
@@ -963,7 +982,7 @@ def fetch_chain(symbol):
         r.raise_for_status()
         ct = r.headers.get("Content-Type", "")
         if "json" not in ct:
-            _last_nse_error[symbol] = f"Blocked (HTML {r.status_code}) — auto-recovery queued"
+            _last_nse_error[symbol] = f"Blocked (HTML {r.status_code})"
             _nse_fail_counts[symbol] = _nse_fail_counts.get(symbol, 0) + 1
             if _nse_fail_counts[symbol] >= 3 and not _recovery_active:
                 threading.Thread(target=_auto_recover, daemon=True).start()
@@ -1515,10 +1534,9 @@ def _startup():
         init_db()
     except Exception as e:
         print(f"  [WARN] DB init failed ({e}) — running without persistence")
-    try:
-        refresh_cookies()
-    except Exception as e:
-        print(f"  [WARN] Cookie init failed ({e})")
+    # Refresh cookies in background — Playwright can hang for 60s+ if NSE blocks
+    # the cloud IP, which would prevent the poll thread from ever starting.
+    threading.Thread(target=refresh_cookies, daemon=True).start()
     try:
         conn=sqlite3.connect(DB_PATH)
         for sym in SYMBOLS:
