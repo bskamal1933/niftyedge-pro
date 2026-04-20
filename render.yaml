@@ -7,11 +7,3 @@ services:
     envVars:
       - key: PUBLIC_URL
         value: https://pykt.in
-      - key: DB_PATH
-        value: /data/niftyedge_tips.db
-      - key: CACHE_DIR
-        value: /data/cache
-    disk:
-      name: niftyedge-data
-      mountPath: /data
-      sizeGB: 1
