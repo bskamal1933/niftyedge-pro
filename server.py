@@ -168,6 +168,9 @@ _REGIME_FLIP_EVERY = 25  # polls (~75 s) before flipping regime
 
 # ── Database ──────────────────────────────────────────────────────────────────
 def init_db():
+    db_dir = os.path.dirname(DB_PATH)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS tips (
@@ -1296,82 +1299,77 @@ def poll_loop():
     while True:
         cookie_timer+=1; resolve_timer+=1
         if cookie_timer>=int(300/POLL_INTERVAL): refresh_cookies(); cookie_timer=0
-        if resolve_timer>=int(30/POLL_INTERVAL):  # check outcomes every 30s
+        if resolve_timer>=int(30/POLL_INTERVAL):
             resolve_pending_tips(current_prices); resolve_timer=0
 
         for sym in SYMBOLS:
-            if _demo_mode:
-                # --- SAMPLE MODE: use last working day's real NSE snapshot ---
-                analysis = load_sample_analysis(sym)
-                if analysis is None:
-                    # No snapshot saved yet — fall back to synthetic until one is cached
-                    analysis = make_demo_analysis(sym)
-                    _sample_src = 'synthetic'
+            try:
+                if _demo_mode:
+                    analysis = load_sample_analysis(sym)
+                    if analysis is None:
+                        analysis = make_demo_analysis(sym)
+                        _sample_src = 'synthetic'
+                    else:
+                        _sample_src = f"{analysis.get('data_label','?')} {analysis.get('display_date','')}"
+                    if _src.get(sym) != 'sample':
+                        mst = analysis.get('market_status', '')
+                        print(f"  [{_ts()}] [SAMPLE] {sym}: {_sample_src} ({mst})")
+                        _src[sym] = 'sample'
+
+                elif (raw := fetch_chain(sym)):
+                    analysis = analyse_chain(raw, sym)
+                    save_snapshot(sym, analysis)
+                    if _src.get(sym) != 'nse':
+                        print(f"  [{_ts()}] [OK] {sym}: NSE data restored")
+                        _src[sym] = 'nse'
                 else:
-                    _sample_src = f"{analysis.get('data_label','?')} {analysis.get('display_date','')}"
+                    spot = fetch_spot_yahoo(sym)
+                    if not spot:
+                        if _src.get(sym) != 'fail':
+                            print(f"  [{_ts()}] [ERR] {sym}: both NSE and Yahoo failed")
+                            _src[sym] = 'fail'
+                        continue
+                    analysis = make_synthetic_analysis(sym, spot)
+                    if _src.get(sym) != 'yahoo':
+                        print(f"  [{_ts()}] [WARN] {sym}: NSE blocked — using Yahoo Finance fallback")
+                        _src[sym] = 'yahoo'
 
-                if _src.get(sym) != 'sample':
-                    mst = analysis.get('market_status', '')
-                    print(f"  [{_ts()}] [SAMPLE] {sym}: {_sample_src} ({mst})")
-                    _src[sym] = 'sample'
+                now = ist_now()
+                current_prices[sym] = analysis["spot"]
+                with state[sym]["lock"]:
+                    state[sym]["analysis"] = analysis
+                    state[sym]["oi_hist"].append((now.isoformat(), analysis["total_call_oi"], analysis["total_put_oi"]))
+                    update_candles(sym, analysis["spot"], now)
 
-            elif (raw := fetch_chain(sym)):
-                analysis = analyse_chain(raw, sym)
-                # Persist to cache so sample mode can replay this data
-                save_snapshot(sym, analysis)
-                if _src.get(sym) != 'nse':
-                    print(f"  [{_ts()}] [OK] {sym}: NSE data restored")
-                    _src[sym] = 'nse'
-            else:
-                # NSE blocked — try Yahoo Finance for spot price
-                spot = fetch_spot_yahoo(sym)
-                if not spot:
-                    if _src.get(sym) != 'fail':
-                        print(f"  [{_ts()}] [ERR] {sym}: both NSE and Yahoo failed")
-                        _src[sym] = 'fail'
-                    continue
-                analysis = make_synthetic_analysis(sym, spot)
-                if _src.get(sym) != 'yahoo':
-                    print(f"  [{_ts()}] [WARN] {sym}: NSE blocked — using Yahoo Finance fallback")
-                    _src[sym] = 'yahoo'
+                tips = {str(tf): make_tip(sym, tf, analysis) for tf in CANDLE_MINS}
 
-            now = ist_now()
-            current_prices[sym] = analysis["spot"]
-            with state[sym]["lock"]:
-                state[sym]["analysis"] = analysis
-                state[sym]["oi_hist"].append((now.isoformat(), analysis["total_call_oi"], analysis["total_put_oi"]))
-                update_candles(sym, analysis["spot"], now)
+                src = analysis.get("source", "nse")
+                if src in ("demo", "sample"):
+                    for tf, tip in tips.items():
+                        if tip["direction"] != "NEUTRAL":
+                            log_tip(tip, notes="SAMPLE")
+                elif src != "yahoo_fallback":
+                    for tf, tip in tips.items():
+                        if tip["direction"] != "NEUTRAL" and int(tf) >= 10:
+                            log_tip(tip)
 
-            tips = {str(tf): make_tip(sym, tf, analysis) for tf in CANDLE_MINS}
+                payload = {
+                    "type": "update", "symbol": sym, "analysis": analysis, "tips": tips,
+                    "candles": {str(tf): list(state[sym]["candles"][tf])[-60:] for tf in CANDLE_MINS},
+                    "oi_hist": list(state[sym]["oi_hist"])[-120:],
+                }
+                msg = f"data: {json.dumps(payload)}\n\n"
+                with subs_lock:
+                    dead = []
+                    for q in subscribers:
+                        try: q.append(msg)
+                        except: dead.append(q)
+                    for q in dead:
+                        try: subscribers.remove(q)
+                        except: pass
 
-            # Log tips to DB
-            src = analysis.get("source", "nse")
-            if src in ("demo", "sample"):
-                # Sample mode: log all non-neutral tips tagged SAMPLE
-                for tf, tip in tips.items():
-                    if tip["direction"] != "NEUTRAL":
-                        log_tip(tip, notes="SAMPLE")
-            elif src != "yahoo_fallback":
-                # Live mode: skip 1M (too noisy), log strong signals only
-                for tf, tip in tips.items():
-                    if tip["direction"] != "NEUTRAL" and int(tf) >= 10:
-                        log_tip(tip)
-
-            payload = {
-                "type": "update", "symbol": sym, "analysis": analysis, "tips": tips,
-                "candles": {str(tf): list(state[sym]["candles"][tf])[-60:] for tf in CANDLE_MINS},
-                "oi_hist": list(state[sym]["oi_hist"])[-120:],
-            }
-            msg = f"data: {json.dumps(payload)}\n\n"
-            with subs_lock:
-                dead = []
-                for q in subscribers:
-                    try: q.append(msg)
-                    except: dead.append(q)
-                for q in dead:
-                    try: subscribers.remove(q)
-                    except: pass
-
+            except Exception as e:
+                print(f"  [ERR] {sym} poll error: {e}")
 
         time.sleep(POLL_INTERVAL)
 
@@ -1513,8 +1511,14 @@ def stream():
 
 # ── Startup ────────────────────────────────────────────────────────────────────
 def _startup():
-    init_db()
-    refresh_cookies()
+    try:
+        init_db()
+    except Exception as e:
+        print(f"  [WARN] DB init failed ({e}) — running without persistence")
+    try:
+        refresh_cookies()
+    except Exception as e:
+        print(f"  [WARN] Cookie init failed ({e})")
     try:
         conn=sqlite3.connect(DB_PATH)
         for sym in SYMBOLS:
@@ -1527,6 +1531,7 @@ def _startup():
         conn.close()
     except: pass
     threading.Thread(target=poll_loop,daemon=True).start()
+    print(f"  [OK] Poll loop started")
 
 # When imported by gunicorn, run startup in the worker process
 if __name__ != "__main__":
