@@ -3049,23 +3049,21 @@
       fetch('/api/status').then(r => r.json()).then(d => { if (d.demo_mode) applyDemoUI(true); }).catch(() => { });
       connectSSE();
       window.addEventListener('resize', () => { if (live[cSym]) { drawPriceChart(); drawOIChart(); } });
-      // After 12s, if SSE is live but no ticks arrived, show NSE-block warning
+      // After 30s, if SSE is live but no ticks arrived, show a warning
       setTimeout(() => {
         if (isLive && ticks === 0) {
           fetch('/api/debug').then(r => r.json()).then(d => {
             const errs = Object.entries(d.symbols || {}).filter(([, v]) => v.last_error).map(([k, v]) => `${k}: ${v.last_error}`);
-            const msg = errs.length ? errs.join(' | ') : 'NSE API not responding — cookies may be blocked. Restart server and try again.';
-            const el = document.getElementById('lastTick');
-            if (el) el.textContent = 'NSE BLOCKED';
+            const msg = errs.length ? errs.join(' | ') : 'Server is starting up — data will appear shortly.';
             const warn = document.createElement('div');
             warn.style.cssText = 'position:fixed;bottom:36px;left:50%;transform:translateX(-50%);background:#f59e0b18;border:1px solid #f59e0b44;color:#f59e0b;padding:8px 18px;border-radius:6px;font-size:12px;z-index:999;max-width:600px;text-align:center;';
             warn.setAttribute('data-nse-warn', '1');
-            warn.textContent = '⚠ Server connected but NSE data blocked — ' + msg;
+            warn.textContent = '⚠ ' + msg;
             document.body.appendChild(warn);
-            setTimeout(() => warn.remove(), 20000);
+            setTimeout(() => warn.remove(), 30000);
           }).catch(() => { });
         }
-      }, 12000);
+      }, 30000);
     }
   </script>
 </body>

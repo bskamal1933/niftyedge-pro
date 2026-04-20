@@ -4,6 +4,7 @@
 flask>=2.3.0
 requests>=2.31.0
 flask-cors>=4.0.0
+curl_cffi>=0.6.0
 nsepython>=2.2
 playwright>=1.40.0
 gunicorn>=20.1.0
