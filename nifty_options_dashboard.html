@@ -2101,6 +2101,20 @@
       ticks++;
       document.getElementById('tickCt').textContent = ticks;
       document.getElementById('lastTick').textContent = fmtTime(ist());
+
+      // Update market open/closed from live stream
+      const mst = d.analysis.market_status;
+      if (mst) {
+        const wasOpen = _marketOpen;
+        _marketOpen = (mst === 'OPEN');
+        if (_marketOpen !== wasOpen) {
+          // Market just opened → force LIVE mode; market just closed → allow SAMPLE
+          if (_marketOpen && _demoMode) setDataMode(false);
+          updateModeControls();
+          _heroSigKey = null;  // force hero re-render with new market state
+        }
+      }
+
       if (s === cSym) renderLive();
 
       // Subtle data-source indicator (non-blocking — replaces the old "NSE Blocked" full-screen panel)
@@ -2362,6 +2376,18 @@
     function renderHero(tip, a) {
       const el = document.getElementById('tipHero');
       const rt = document.getElementById('tipRationale');
+
+      // LIVE mode + market closed → don't show tips; prompt to use Sample mode
+      if (!_demoMode && !_marketOpen) {
+        const closedKey = '__MARKET_CLOSED__';
+        if (_heroSigKey !== closedKey) {
+          el.innerHTML = '<div class="empty-state" style="height:200px"><div class="es-icon">🔒</div><div class="es-text" style="font-size:13px;font-weight:600;color:var(--text)">Market Closed</div><div style="font-size:11px;color:var(--dim);margin-top:6px;">Tips are shown only during live market hours.<br>Switch to <strong>SAMPLE</strong> mode to explore past data.</div></div>';
+          rt.style.display = 'none'; if (cdT) { clearInterval(cdT); cdT = null; }
+          _heroSigKey = closedKey;
+        }
+        return;
+      }
+
       if (!tip) {
         el.innerHTML = '<div class="empty-state" style="height:200px"><div class="es-icon">📡</div><div class="es-text">Awaiting live data…</div></div>';
         rt.style.display = 'none'; if (cdT) { clearInterval(cdT); cdT = null; }
@@ -2442,6 +2468,7 @@
 
     function renderAllTF() {
       const el = document.getElementById('allTFPanel');
+      if (!_demoMode && !_marketOpen) { el.innerHTML = '<div class="empty-state"><div class="es-text" style="font-size:11px;">Market Closed</div></div>'; return; }
       const t = tips_[cSym] || {};
       if (!Object.keys(t).length) { el.innerHTML = '<div class="empty-state"><div class="es-text">—</div></div>'; return; }
       el.innerHTML = TFs.map(tf => {
@@ -2532,6 +2559,7 @@
     function renderSignals(a) {
       const el = document.getElementById('signalsPanel');
       if (!a) { el.innerHTML = '<div class="empty-state"><div class="es-text">—</div></div>'; return; }
+      if (!_demoMode && !_marketOpen) { el.innerHTML = '<div class="empty-state" style="height:200px"><div class="es-icon">🔒</div><div class="es-text" style="font-size:11px;">Market Closed</div></div>'; return; }
       // All sources (live, live_synthetic, sample, demo) now render the full panel
       const pcr = a.pcr || 1;
       const pcrPct = Math.min(100, Math.max(0, (pcr - .5) / 1.0 * 100));
@@ -2943,6 +2971,7 @@
        DATA MODE TOGGLE  (Live ↔ Sample)
     ════════════════════════ */
     let _demoMode = false;
+    let _marketOpen = false;   // true only during live market hours (9:15–15:30 IST, Mon–Fri)
     let _sampleMeta = { date: '', displayDate: '', marketStatus: '', dataLabel: '' };
 
     function _sampleBadgeText() {
@@ -3041,12 +3070,42 @@
       if (document.getElementById('tab-log')?.classList.contains('active')) {
         loadLog();
       }
+
+      updateModeControls();
+      _heroSigKey = null;  // force hero re-render for new mode
+      renderLive();
+    }
+
+    function updateModeControls() {
+      const track = document.getElementById('msTrack');
+      const lblSample = document.getElementById('msLblSample');
+      const lblLive = document.getElementById('msLblLive');
+      const locked = _marketOpen && !_demoMode;  // market open + live → lock SAMPLE out
+      if (track) {
+        track.style.opacity = locked ? '0.35' : '';
+        track.style.cursor  = locked ? 'not-allowed' : '';
+        track.style.pointerEvents = locked ? 'none' : '';
+      }
+      if (lblSample) {
+        lblSample.style.opacity = locked ? '0.35' : '';
+        lblSample.style.cursor  = locked ? 'not-allowed' : '';
+        lblSample.style.pointerEvents = locked ? 'none' : '';
+      }
     }
 
     function toggleDataMode() { setDataMode(!_demoMode); }
 
     function setDataMode(wantDemo) {
       if (_demoMode === wantDemo) return;
+      // Block switching to SAMPLE while market is open
+      if (wantDemo && _marketOpen) {
+        const t = document.createElement('div');
+        t.style.cssText = 'position:fixed;bottom:40px;left:50%;transform:translateX(-50%);background:#f59e0b18;border:1px solid #f59e0b66;color:#f59e0b;padding:7px 20px;border-radius:6px;font-size:12px;z-index:999;pointer-events:none;';
+        t.textContent = 'Sample mode is only available when market is closed.';
+        document.body.appendChild(t);
+        setTimeout(() => t.remove(), 3000);
+        return;
+      }
       // Optimistic: update UI immediately — don't wait for server round-trip
       applyDemoUI(wantDemo);
       _heroSigKey = null;
@@ -3104,7 +3163,12 @@
     function init() {
       setInterval(clockTick, 1000); clockTick();
       // Sync demo toggle state with server on load
-      fetch('/api/status').then(r => r.json()).then(d => { if (d.demo_mode) applyDemoUI(true); }).catch(() => { });
+      fetch('/api/status').then(r => r.json()).then(d => {
+        if (d.demo_mode) applyDemoUI(true);
+        _marketOpen = d.market_status === 'OPEN';
+        updateModeControls();
+        if (!_demoMode) renderLive();  // re-render hero with correct market state
+      }).catch(() => { });
       connectSSE();
       loadLiveTips();
       logRefT = setInterval(loadLiveTips, 10000);  // keep locked tips panel fresh
