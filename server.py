@@ -1443,6 +1443,8 @@ def debug():
             "fail_count": _nse_fail_counts.get(sym, 0),
             "last_error": _last_nse_error.get(sym),
         }
+    import threading as _th
+    poll_alive = any(t.name == "poll_loop" and t.is_alive() for t in _th.enumerate())
     return jsonify({
         "subscribers": len(subscribers),
         "session_cookies": len(session.cookies),
@@ -1450,6 +1452,8 @@ def debug():
         "recovery_active": _recovery_active,
         "playwright": _HAS_PLAYWRIGHT,
         "nsepython": _HAS_NSEPY,
+        "curl_cffi": _HAS_CURL_CFFI,
+        "poll_running": poll_alive,
         "symbols": info,
     })
 
@@ -1548,8 +1552,24 @@ def _startup():
                     print(f"  [DB] Loaded weights for {sym} {tf}m")
         conn.close()
     except: pass
-    threading.Thread(target=poll_loop,daemon=True).start()
-    print(f"  [OK] Poll loop started")
+    t = threading.Thread(target=poll_loop, daemon=True, name="poll_loop")
+    t.start()
+    print(f"  [OK] Poll loop started (thread id={t.ident})")
+
+def _ensure_poll_running():
+    """Start poll thread if not already alive (idempotent)."""
+    import threading as _th
+    if not any(t.name == "poll_loop" and t.is_alive() for t in _th.enumerate()):
+        t = threading.Thread(target=poll_loop, daemon=True, name="poll_loop")
+        t.start()
+        print(f"  [RESTART] Poll loop restarted (thread id={t.ident})")
+        return True
+    return False
+
+@app.route("/api/restart-poll", methods=["POST"])
+def restart_poll():
+    restarted = _ensure_poll_running()
+    return jsonify({"restarted": restarted, "msg": "Poll loop restarted" if restarted else "Already running"})
 
 # When imported by gunicorn, run startup in the worker process
 if __name__ != "__main__":
