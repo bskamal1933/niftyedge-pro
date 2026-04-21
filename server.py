@@ -16,9 +16,9 @@ RUN:
   python server.py
 """
 
-from flask import Flask, jsonify, Response, request, send_file
+from flask import Flask, jsonify, Response, request, send_file, session, redirect
 from flask_cors import CORS
-import requests, json, time, threading, math, logging, sqlite3, os, shutil
+import requests, json, time, threading, math, logging, sqlite3, os, shutil, secrets, hashlib
 from datetime import datetime, timezone, timedelta, date as _date
 from collections import deque
 
@@ -46,6 +46,16 @@ app  = Flask(__name__)
 CORS(app)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Persistent secret key — generated once, stored in .secret_key file
+_SECRET_FILE = os.path.join(BASE_DIR, '.secret_key')
+try:
+    app.secret_key = open(_SECRET_FILE).read().strip()
+except FileNotFoundError:
+    _sk = secrets.token_hex(32)
+    try: open(_SECRET_FILE, 'w').write(_sk)
+    except: pass
+    app.secret_key = os.environ.get("SECRET_KEY", _sk)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 POLL_INTERVAL = 3
@@ -227,12 +237,34 @@ def init_db():
         accuracy   REAL,
         updated_at TEXT
     )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS users (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        username      TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        role          TEXT NOT NULL DEFAULT 'rookie',
+        created_at    TEXT,
+        last_login    TEXT
+    )''')
     conn.commit()
     # Migration: add notes column if missing (for demo/source tagging)
     try: conn.execute("ALTER TABLE tips ADD COLUMN notes TEXT")
     except: pass
     conn.commit(); conn.close()
     print(f"  [DB] Database ready: {DB_PATH}")
+
+
+def _hash_pw(pw: str) -> str:
+    salt = secrets.token_hex(16)
+    key  = hashlib.pbkdf2_hmac('sha256', pw.encode(), salt.encode(), 260000).hex()
+    return f"{salt}:{key}"
+
+def _verify_pw(pw: str, stored: str) -> bool:
+    try:
+        salt, key_hex = stored.split(':', 1)
+        key = hashlib.pbkdf2_hmac('sha256', pw.encode(), salt.encode(), 260000).hex()
+        return secrets.compare_digest(key, key_hex)
+    except Exception:
+        return False
 
 def log_tip(tip: dict, notes: str = None):
     """Insert a new tip into the DB."""
@@ -1425,8 +1457,63 @@ def poll_loop():
         time.sleep(POLL_INTERVAL)
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "GET":
+        if session.get("user_id"):
+            return redirect("/")
+        return send_file(os.path.join(BASE_DIR, "login.html"))
+    data  = request.get_json(silent=True) or {}
+    uname = (data.get("username") or "").strip()
+    pw    = data.get("password") or ""
+    if not uname or not pw:
+        return jsonify({"error": "Username and password required"}), 400
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute("SELECT id, password_hash, role FROM users WHERE username=?", (uname,)).fetchone()
+    if not row or not _verify_pw(pw, row[1]):
+        return jsonify({"error": "Invalid username or password"}), 401
+    session["user_id"]  = row[0]
+    session["username"] = uname
+    session["role"]     = row[2]
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("UPDATE users SET last_login=? WHERE id=?", (datetime.utcnow().isoformat(), row[0]))
+    return jsonify({"success": True, "role": row[2]})
+
+@app.route("/register", methods=["POST"])
+def register():
+    data  = request.get_json(silent=True) or {}
+    uname = (data.get("username") or "").strip()
+    pw    = data.get("password") or ""
+    role  = (data.get("role") or "rookie").lower()
+    if not uname or not pw:
+        return jsonify({"error": "Username and password required"}), 400
+    if len(pw) < 6:
+        return jsonify({"error": "Password must be at least 6 characters"}), 400
+    if role not in ("rookie", "professional"):
+        role = "rookie"
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "INSERT INTO users (username, password_hash, role, created_at) VALUES (?,?,?,?)",
+                (uname, _hash_pw(pw), role, datetime.utcnow().isoformat())
+            )
+            uid = conn.execute("SELECT id FROM users WHERE username=?", (uname,)).fetchone()[0]
+        session["user_id"]  = uid
+        session["username"] = uname
+        session["role"]     = role
+        return jsonify({"success": True, "role": role})
+    except sqlite3.IntegrityError:
+        return jsonify({"error": "Username already taken"}), 409
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect("/login")
+
 @app.route("/")
 def home():
+    if not session.get("user_id"):
+        return redirect("/login")
     html = os.path.join(BASE_DIR, 'nifty_options_dashboard.html')
     if os.path.exists(html):
         return send_file(html)

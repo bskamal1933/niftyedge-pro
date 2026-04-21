@@ -41,3 +41,6 @@ logs/
 # Environment variables
 .env
 .env.local
+
+# Generated secret key — never commit
+.secret_key
