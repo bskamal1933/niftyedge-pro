@@ -42,6 +42,20 @@ try:
 except ImportError:
     _HAS_CURL_CFFI = False
 
+try:
+    import yfinance as _yf
+    _HAS_YF = True
+except ImportError:
+    _HAS_YF = False
+
+# nsepy 0.8 uses legacy NSE endpoints (www1.nseindia.com) which return SSL errors.
+# Import only for potential future use; do NOT add to active fetch paths until fixed.
+try:
+    import nsepy as _nsepy
+    _HAS_NSEPY_LIB = True
+except Exception:
+    _HAS_NSEPY_LIB = False
+
 app  = Flask(__name__)
 CORS(app)
 
@@ -181,6 +195,10 @@ _demo_ticks   = {'NIFTY': 0, 'BANKNIFTY': 0}      # poll counter per symbol
 _demo_regime  = {'NIFTY': 'bull', 'BANKNIFTY': 'bull'}  # 'bull' | 'bear'
 _demo_seeded  = {'NIFTY': False, 'BANKNIFTY': False}  # price seeded from cache?
 _REGIME_FLIP_EVERY = 25  # polls (~75 s) before flipping regime
+
+# ── Sample replay store (real NSE data fetched for SAMPLE mode) ───────────────
+_sample_data  = {'NIFTY': None, 'BANKNIFTY': None}
+_sample_lock  = threading.Lock()
 
 # ── Database ──────────────────────────────────────────────────────────────────
 def init_db():
@@ -1129,22 +1147,78 @@ def load_sample_analysis(sym: str):
     analysis['timestamp']     = datetime.now(timezone.utc).isoformat()
     return analysis
 
-# ── Yahoo Finance fallback (spot price only) ───────────────────────────────────
-_YF_SYM = {'NIFTY': '%5ENSEI', 'BANKNIFTY': '%5ENSEBANK'}
-_YF_HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+# ── yfinance — spot price + historical candles ────────────────────────────────
+_YF_TICKERS = {'NIFTY': '^NSEI', 'BANKNIFTY': '^NSEBANK'}
 
-def fetch_spot_yahoo(symbol):
+def fetch_spot_yfinance(symbol):
+    """Real-time spot price via yfinance (proper library — handles rate limiting)."""
+    if not _HAS_YF:
+        return _fetch_spot_yahoo_raw(symbol)
     try:
-        yf = _YF_SYM.get(symbol)
-        if not yf: return None
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yf}?interval=1m&range=1d"
-        r = requests.get(url, headers=_YF_HEADERS, timeout=8)
+        tkr = _YF_TICKERS.get(symbol)
+        if not tkr: return None
+        price = _yf.Ticker(tkr).fast_info.last_price
+        return round(float(price), 2) if price else None
+    except Exception as e:
+        print(f"  [{_ts()}] [ERR] yfinance spot {symbol}: {e}")
+        return _fetch_spot_yahoo_raw(symbol)   # raw fallback
+
+def _fetch_spot_yahoo_raw(symbol):
+    """Raw Yahoo Finance v8 API — fallback when yfinance library is unavailable."""
+    _sym_map = {'NIFTY': '%5ENSEI', 'BANKNIFTY': '%5ENSEBANK'}
+    _hdrs    = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+    try:
+        s = _sym_map.get(symbol)
+        if not s: return None
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{s}?interval=1m&range=1d"
+        r = requests.get(url, headers=_hdrs, timeout=8)
         d = r.json()
         price = d["chart"]["result"][0]["meta"]["regularMarketPrice"]
         return round(float(price), 2)
     except Exception as e:
-        print(f"  [{_ts()}] [ERR] Yahoo {symbol}: {e}")
+        print(f"  [{_ts()}] [ERR] Yahoo raw {symbol}: {e}")
         return None
+
+# Keep alias so /api/debug still works
+def fetch_spot_yahoo(symbol):
+    return fetch_spot_yfinance(symbol)
+
+def prewarm_candles_from_yf(sym):
+    """
+    Load last 2 trading days of 1-minute OHLCV from yfinance into the candle engine.
+    Gives RSI / EMA / VWAP / ATR real historical context from tick 1 instead of
+    building up from scratch over the live session.
+    """
+    if not _HAS_YF:
+        return
+    try:
+        tkr = _YF_TICKERS.get(sym)
+        if not tkr: return
+        df = _yf.Ticker(tkr).history(period='2d', interval='1m')
+        if df.empty: return
+        # Localise to IST (yfinance returns tz-aware UTC-offset timestamps)
+        df.index = df.index.tz_convert('Asia/Kolkata')
+        inserted = 0
+        with state[sym]["lock"]:
+            for ts, row in df.iterrows():
+                dt  = ts.to_pydatetime()
+                o_, h_, l_, c_ = float(row['Open']), float(row['High']), float(row['Low']), float(row['Close'])
+                if any(math.isnan(v) for v in (o_, h_, l_, c_)): continue
+                for m in CANDLE_MINS:
+                    b  = candle_bucket(dt, m)
+                    cl = state[sym]["candles"][m]
+                    if cl and cl[-1]["t"] == b:
+                        x = cl[-1]
+                        x["h"] = max(x["h"], h_); x["l"] = min(x["l"], l_)
+                        x["c"] = c_; x["n"] += 1
+                    else:
+                        cl.append({"t": b, "o": o_, "h": h_, "l": l_, "c": c_, "n": 1})
+                inserted += 1
+        print(f"  [{_ts()}] [YF] {sym}: candles pre-warmed — {inserted} 1m bars → "
+              f"{len(state[sym]['candles'][1])} 1m / {len(state[sym]['candles'][10])} 10m / "
+              f"{len(state[sym]['candles'][60])} 1h buckets")
+    except Exception as e:
+        print(f"  [{_ts()}] [ERR] Candle pre-warm {sym}: {e}")
 
 def make_synthetic_analysis(symbol: str, spot: float):
     """
@@ -1224,6 +1298,101 @@ def make_synthetic_analysis(symbol: str, spot: float):
 
 # ── Demo / Sample-data generator ───────────────────────────────────────────────
 import random as _rnd
+
+# ── Sample mode: fetch real NSE option chain (works outside market hours) ──────
+def _fetch_and_store_sample(sym):
+    """
+    Background thread: fetch live NSE option chain for SAMPLE replay.
+    NSE returns the most recent session's data even when market is closed.
+    """
+    global _sample_data, _demo_prices, _demo_seeded
+    try:
+        print(f"  [{_ts()}] [SAMPLE] Fetching real NSE chain for {sym}…")
+        raw = fetch_chain(sym)
+        if raw:
+            analysis = analyse_chain(raw, sym)
+            if analysis and analysis.get('records'):
+                sess = _market_session()
+                snap_date = ist_now().strftime('%Y-%m-%d')
+                analysis['source']        = 'sample'
+                analysis['sample_date']   = snap_date
+                analysis['display_date']  = _fmt_display_date(snap_date)
+                analysis['data_label']    = 'LIVE_SNAP'
+                analysis['market_status'] = sess['status']
+                with _sample_lock:
+                    _sample_data[sym] = analysis
+                    _demo_prices[sym] = float(analysis.get('spot', _demo_prices[sym]))
+                    _demo_seeded[sym] = True
+                save_snapshot(sym, analysis)
+                n = len(analysis['records'])
+                print(f"  [{_ts()}] [SAMPLE] {sym}: {n} real strikes loaded, spot={analysis['spot']:.0f}")
+                return
+        # NSE blocked — try disk cache first
+        cached = load_sample_analysis(sym)
+        if cached and cached.get('records'):
+            with _sample_lock:
+                _sample_data[sym] = cached
+                _demo_prices[sym] = float(cached.get('spot', _demo_prices[sym]))
+                _demo_seeded[sym] = True
+            print(f"  [{_ts()}] [SAMPLE] {sym}: Using cache from {cached.get('sample_date','?')}, {len(cached['records'])} strikes")
+            return
+        # Cache empty/absent — build real-anchored synthetic via yfinance spot
+        spot = fetch_spot_yfinance(sym)
+        if spot:
+            synth = make_synthetic_analysis(sym, spot)
+            sess  = _market_session()
+            snap_date = ist_now().strftime('%Y-%m-%d')
+            synth['source']        = 'sample'
+            synth['sample_date']   = snap_date
+            synth['display_date']  = _fmt_display_date(snap_date)
+            synth['data_label']    = 'YF_SYNTH'
+            synth['market_status'] = sess['status']
+            with _sample_lock:
+                _sample_data[sym] = synth
+                _demo_prices[sym] = spot
+                _demo_seeded[sym] = True
+            print(f"  [{_ts()}] [SAMPLE] {sym}: yfinance spot={spot:.0f} → synthetic chain built")
+        else:
+            print(f"  [{_ts()}] [WARN] {sym}: No NSE/cache/yfinance data — SAMPLE falls back to animated synthetic")
+    except Exception as e:
+        print(f"  [{_ts()}] [ERR] Sample fetch {sym}: {e}")
+
+
+def make_sample_replay(sym):
+    """
+    SAMPLE mode tick: replay real last-session NSE option chain.
+    Real strikes + real LTPs from NSE; spot price gently walks for visual liveliness.
+    Falls back to make_demo_analysis() if no real data is loaded yet.
+    """
+    global _demo_prices, _demo_ticks
+    with _sample_lock:
+        base = _sample_data.get(sym)
+
+    if not base or not base.get('records'):
+        return make_demo_analysis(sym)   # synthetic fallback while fetch is in-flight
+
+    step = 50 if sym == 'NIFTY' else 100
+
+    # Seed price from real data on first tick
+    if not _demo_seeded[sym]:
+        _demo_prices[sym] = float(base.get('spot', _demo_prices[sym]))
+        _demo_seeded[sym] = True
+
+    # Gentle random walk (±0.08% per tick — just enough for visual liveliness)
+    _demo_ticks[sym] = _demo_ticks.get(sym, 0) + 1
+    drift = _rnd.uniform(-0.0008, 0.0008) * _demo_prices[sym]
+    _demo_prices[sym] = max(_demo_prices[sym] + drift, step * 10)
+    spot = round(_demo_prices[sym], 2)
+    atm  = round(spot / step) * step
+
+    # Use real option chain; update only spot/atm/timestamp
+    analysis = dict(base)
+    analysis['spot']          = spot
+    analysis['atm']           = atm
+    analysis['market_status'] = _market_session()['status']
+    analysis['timestamp']     = datetime.now(timezone.utc).isoformat()
+    return analysis
+
 
 def make_demo_analysis(sym):
     global _demo_prices, _demo_trend, _demo_ticks, _demo_regime
@@ -1323,6 +1492,7 @@ def make_demo_analysis(sym):
         "bull_prob": bull_prob, "records": records,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "source": "demo",
+        "market_status": _market_session()["status"],
     }
 
 # ── Candle builder ─────────────────────────────────────────────────────────────
@@ -1349,22 +1519,28 @@ def poll_loop():
         cookie_timer+=1; resolve_timer+=1
         if cookie_timer>=int(300/POLL_INTERVAL): refresh_cookies(); cookie_timer=0
         if resolve_timer>=int(30/POLL_INTERVAL):
-            resolve_pending_tips(current_prices); resolve_timer=0
+            if not _demo_mode:  # never resolve against synthetic demo prices
+                resolve_pending_tips(current_prices)
+            resolve_timer=0
 
         for sym in SYMBOLS:
             try:
                 if _demo_mode:
-                    # Seed price walk from cached snapshot once so demo starts at a realistic price
-                    if not _demo_seeded[sym]:
-                        cached = load_sample_analysis(sym)
-                        if cached and cached.get('spot'):
-                            _demo_prices[sym] = float(cached['spot'])
-                        _demo_seeded[sym] = True
-                    # Always use make_demo_analysis so spot animates every tick
-                    analysis = make_demo_analysis(sym)
-                    if _src.get(sym) != 'sample':
-                        print(f"  [{_ts()}] [SAMPLE] {sym}: demo @ {_demo_prices[sym]:.0f}")
-                        _src[sym] = 'sample'
+                    # Trigger background NSE fetch if we don't have real sample data yet
+                    with _sample_lock:
+                        has_data = bool(_sample_data.get(sym) and _sample_data[sym].get('records'))
+                    if not has_data and not _demo_seeded[sym]:
+                        threading.Thread(
+                            target=_fetch_and_store_sample, args=(sym,), daemon=True,
+                            name=f"sample_fetch_{sym}"
+                        ).start()
+                        _demo_seeded[sym] = True   # prevent re-spawning on next tick
+                    analysis = make_sample_replay(sym)
+                    src_key = analysis.get('source', 'sample')
+                    if _src.get(sym) != src_key:
+                        n = len(analysis.get('records', []))
+                        print(f"  [{_ts()}] [SAMPLE] {sym}: {src_key} @ {analysis['spot']:.0f} ({n} strikes)")
+                        _src[sym] = src_key
 
                 elif (raw := fetch_chain(sym)):
                     analysis = analyse_chain(raw, sym)
@@ -1394,24 +1570,19 @@ def poll_loop():
                 tips = {str(tf): make_tip(sym, tf, analysis) for tf in CANDLE_MINS}
 
                 src = analysis.get("source", "nse")
-                for tf_str, tip in tips.items():
-                    tf_int = int(tf_str)
-                    if tip["direction"] == "NEUTRAL":
-                        continue
-                    sig_key = (sym, tf_int)
-                    sig_data = _active_signals.get(sig_key, {})
-                    if sig_data.get("db_id"):
-                        continue  # already logged this active signal
-                    if src in ("demo", "sample"):
-                        row_id = log_tip(tip, notes="SAMPLE")
-                    elif src == "yahoo_fallback":
-                        continue
-                    else:
-                        if tf_int < 10:
+                # Only log tips from real NSE data; synthetic/demo/yahoo tips
+                # can't be resolved against real option prices so skip them
+                if src == "nse" and not _demo_mode:
+                    for tf_str, tip in tips.items():
+                        tf_int = int(tf_str)
+                        if tip["direction"] == "NEUTRAL" or tf_int < 10:
                             continue
+                        sig_key = (sym, tf_int)
+                        if _active_signals.get(sig_key, {}).get("db_id"):
+                            continue  # already logged this active signal
                         row_id = log_tip(tip)
-                    if row_id and sig_key in _active_signals:
-                        _active_signals[sig_key]["db_id"] = row_id
+                        if row_id and sig_key in _active_signals:
+                            _active_signals[sig_key]["db_id"] = row_id
 
                 payload = {
                     "type": "update", "symbol": sym, "analysis": analysis, "tips": tips,
@@ -1457,11 +1628,22 @@ def api_status():
 
 @app.route("/api/demo/toggle", methods=["POST"])
 def demo_toggle():
-    global _demo_mode, _active_signals, _demo_seeded
+    global _demo_mode, _active_signals, _demo_seeded, _sample_data
     _demo_mode = not _demo_mode
     _active_signals.clear()
-    # Reset so price walk re-seeds from latest cache on next entry into demo mode
     _demo_seeded = {sym: False for sym in SYMBOLS}
+    if _demo_mode:
+        # Reset sample store and kick fresh NSE fetch (works even when market closed)
+        with _sample_lock:
+            _sample_data = {sym: None for sym in SYMBOLS}
+        for sym in SYMBOLS:
+            # Only spawn if no existing thread is already fetching
+            existing = [t for t in threading.enumerate() if t.name == f"sample_fetch_{sym}"]
+            if not existing:
+                threading.Thread(
+                    target=_fetch_and_store_sample, args=(sym,), daemon=True,
+                    name=f"sample_fetch_{sym}"
+                ).start()
     label = "SAMPLE" if _demo_mode else "LIVE"
     try:
         print(f"  [{_ts()}] Demo mode -> {label}")
@@ -1555,7 +1737,10 @@ def accuracy():
 
 @app.route("/api/weights")
 def weights():
-    return jsonify({sym:{str(tf):adaptive_weights[sym][tf] for tf in CANDLE_MINS} for sym in SYMBOLS})
+    return jsonify({
+        "defaults": DEFAULT_WEIGHTS,
+        "weights": {sym: {str(tf): adaptive_weights[sym][tf] for tf in CANDLE_MINS} for sym in SYMBOLS},
+    })
 
 @app.route("/api/tip/<int:tip_id>/outcome", methods=['POST'])
 def manual_outcome(tip_id):
@@ -1631,10 +1816,29 @@ def _startup():
     except Exception as e:
         print(f"  [WARN] Could not load weights ({e})")
 
+    print(f"  [ENV] yfinance={_HAS_YF}  nsepy-lib={_HAS_NSEPY_LIB}  nsepython={_HAS_NSEPY}  curl_cffi={_HAS_CURL_CFFI}  playwright={_HAS_PLAYWRIGHT}")
+
     # Cookie refresh — run in background so it never blocks the poll thread.
-    # On production Playwright fetches real NSE cookies; locally it gracefully
-    # falls back (Playwright may not be installed or NSE may block the IP).
     threading.Thread(target=refresh_cookies, daemon=True, name="cookie_refresh").start()
+
+    # Pre-warm candle engine with real historical 1m bars from yfinance.
+    # This gives RSI/EMA/VWAP meaningful values from the very first tick
+    # instead of building up from scratch over the live session.
+    def _prewarm_all():
+        for sym in SYMBOLS:
+            prewarm_candles_from_yf(sym)
+    threading.Thread(target=_prewarm_all, daemon=True, name="candle_prewarm").start()
+
+    # If starting in SAMPLE mode (local dev), kick NSE fetch immediately so real
+    # option chain is available before the first dashboard tick renders.
+    # Set _demo_seeded=True to prevent the poll loop from spawning a duplicate thread.
+    if _demo_mode:
+        for sym in SYMBOLS:
+            threading.Thread(
+                target=_fetch_and_store_sample, args=(sym,), daemon=True,
+                name=f"sample_fetch_{sym}"
+            ).start()
+            _demo_seeded[sym] = True   # mark as seeding-in-progress
 
     # Poll loop — always starts immediately regardless of cookie state
     t = threading.Thread(target=poll_loop, daemon=True, name="poll_loop")
@@ -1657,6 +1861,159 @@ def restart_poll():
     restarted = _ensure_poll_running()
     return jsonify({"restarted": restarted,
                     "msg": "Poll loop restarted" if restarted else "Already running"})
+
+
+# ── Compatibility / alias routes ───────────────────────────────────────────────
+
+@app.route("/dashboard")
+def dashboard():
+    """Alias: serve the main dashboard HTML."""
+    if os.path.exists(HTML_FILE):
+        return send_file(HTML_FILE)
+    return jsonify({"status": "NiftyEdge Pro v3", "env": ENV})
+
+
+@app.route("/tips")
+def tips_page():
+    """Alias: serve the dashboard (tips are embedded in it)."""
+    if os.path.exists(HTML_FILE):
+        return send_file(HTML_FILE)
+    return jsonify({"status": "NiftyEdge Pro v3", "env": ENV})
+
+
+@app.route("/api/tips")
+def api_tips():
+    """Alias for /api/live-tips — returns PENDING tips."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    rows = c.execute(
+        "SELECT id,symbol,timeframe,tf_mins,direction,instrument,strike,opt_type,"
+        "entry,target,sl,rr,confidence,score,spot_at_tip,pcr,iv,rationale,"
+        "created_at,expiry_time,notes FROM tips WHERE outcome='PENDING' ORDER BY created_at DESC"
+    ).fetchall()
+    conn.close()
+    cols = ['id','symbol','timeframe','tf_mins','direction','instrument','strike','opt_type',
+            'entry','target','sl','rr','confidence','score','spot_at_tip','pcr','iv',
+            'rationale','created_at','expiry_time','notes']
+    tips = [dict(zip(cols, r)) for r in rows]
+    return jsonify({"tips": tips, "live_tips": tips, "count": len(tips)})
+
+
+@app.route("/api/data")
+def api_data():
+    """Returns latest market analysis snapshot for all symbols."""
+    _ensure_poll_running()
+    result = {}
+    for sym in SYMBOLS:
+        with state[sym]["lock"]:
+            a = state[sym]["analysis"]
+        if a:
+            result[sym] = {
+                "spot":       a.get("spot"),
+                "pcr":        a.get("pcr"),
+                "iv":         a.get("iv"),
+                "max_pain":   a.get("max_pain"),
+                "bull_prob":  a.get("bull_prob"),
+                "source":     a.get("source", "nse"),
+                "timestamp":  a.get("timestamp"),
+            }
+        else:
+            result[sym] = None
+    return jsonify({"data": result, "demo_mode": _demo_mode, "env": ENV})
+
+
+@app.route("/live-data")
+def live_data():
+    """Alias for /stream — SSE real-time feed."""
+    q = deque(maxlen=100)
+    with subs_lock:
+        subscribers.append(q)
+
+    def gen():
+        for sym in SYMBOLS:
+            with state[sym]["lock"]:
+                a = state[sym]["analysis"]
+            if a:
+                tips = {str(tf): make_tip(sym, tf, a) for tf in CANDLE_MINS}
+                payload = {"type": "update", "symbol": sym, "analysis": a, "tips": tips,
+                           "candles": {str(tf): list(state[sym]["candles"][tf])[-60:] for tf in CANDLE_MINS},
+                           "oi_hist": list(state[sym]["oi_hist"])[-120:]}
+                yield f"data: {json.dumps(payload)}\n\n"
+        yield 'data: {"type":"connected"}\n\n'
+        try:
+            while True:
+                if q:
+                    yield q.popleft()
+                else:
+                    yield f'data:{{"type":"ping","ts":{int(time.time())}}}\n\n'
+                    time.sleep(1)
+        except GeneratorExit:
+            with subs_lock:
+                try:
+                    subscribers.remove(q)
+                except Exception:
+                    pass
+
+    return Response(gen(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.route("/api/signal")
+def api_signal():
+    """Returns current trading signals for all symbols and timeframes."""
+    _ensure_poll_running()
+    signals = {}
+    for sym in SYMBOLS:
+        with state[sym]["lock"]:
+            a = state[sym]["analysis"]
+        if not a:
+            signals[sym] = None
+            continue
+        signals[sym] = {
+            str(tf): make_tip(sym, tf, a)
+            for tf in CANDLE_MINS
+        }
+    return jsonify({"signals": signals, "demo_mode": _demo_mode, "env": ENV})
+
+
+@app.route("/api/trades")
+def api_trades():
+    """Returns trade history (non-PENDING tips) with optional filters."""
+    symbol   = request.args.get("symbol", "").upper() or None
+    outcome  = request.args.get("outcome", "").upper() or None
+    limit    = min(int(request.args.get("limit", 100)), 500)
+    offset   = int(request.args.get("offset", 0))
+
+    where_clauses = ["outcome != 'PENDING'"]
+    params: list = []
+    if symbol and symbol in SYMBOLS:
+        where_clauses.append("symbol = ?")
+        params.append(symbol)
+    if outcome in ("WIN", "LOSS", "EXPIRED", "SKIP"):
+        where_clauses.append("outcome = ?")
+        params.append(outcome)
+
+    where_sql = " AND ".join(where_clauses)
+    params += [limit, offset]
+
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    rows = c.execute(
+        f"SELECT id,symbol,timeframe,tf_mins,direction,instrument,strike,opt_type,"
+        f"entry,target,sl,rr,confidence,score,spot_at_tip,pcr,iv,rationale,"
+        f"created_at,expiry_time,outcome,exit_price,exit_time,pnl_pct,notes "
+        f"FROM tips WHERE {where_sql} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        params
+    ).fetchall()
+    total = c.execute(f"SELECT COUNT(*) FROM tips WHERE {where_sql}", params[:-2]).fetchone()[0]
+    conn.close()
+
+    cols = ['id','symbol','timeframe','tf_mins','direction','instrument','strike','opt_type',
+            'entry','target','sl','rr','confidence','score','spot_at_tip','pcr','iv',
+            'rationale','created_at','expiry_time','outcome','exit_price','exit_time',
+            'pnl_pct','notes']
+    trades = [dict(zip(cols, r)) for r in rows]
+    return jsonify({"trades": trades, "total": total, "limit": limit, "offset": offset})
 
 
 # ── Entry points ──────────────────────────────────────────────────────────────
