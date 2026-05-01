@@ -19,6 +19,19 @@ RUN:
 from flask import Flask, jsonify, Response, request, send_file, session, redirect
 from flask_cors import CORS
 import requests, json, time, threading, math, logging, sqlite3, os, shutil, secrets, hashlib
+
+try:
+    from kite_engine import kite as _kite
+    _HAS_KITE_ENGINE = True
+except Exception:
+    _kite = None
+    _HAS_KITE_ENGINE = False
+
+try:
+    from ml_engine import extract_features, get_engine as _ml_get
+    _HAS_ML = True
+except Exception:
+    _HAS_ML = False
 from datetime import datetime, timezone, timedelta, date as _date
 from collections import deque
 
@@ -244,6 +257,40 @@ def init_db():
         role          TEXT NOT NULL DEFAULT 'rookie',
         created_at    TEXT,
         last_login    TEXT
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS kite_config (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        api_key      TEXT,
+        api_secret   TEXT,
+        access_token TEXT,
+        updated_at   TEXT
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS pro_tips (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol       TEXT,
+        timeframe    TEXT,
+        tf_mins      INTEGER,
+        direction    TEXT,
+        instrument   TEXT,
+        strike       REAL,
+        opt_type     TEXT,
+        entry        REAL,
+        target       REAL,
+        sl           REAL,
+        rr           REAL,
+        confidence   INTEGER,
+        ml_score     REAL,
+        model_used   TEXT,
+        features_json TEXT,
+        spot_at_tip  REAL,
+        pcr          REAL,
+        iv           REAL,
+        created_at   TEXT,
+        expiry_time  TEXT,
+        outcome      TEXT DEFAULT 'PENDING',
+        exit_price   REAL,
+        exit_time    TEXT,
+        pnl_pct      REAL
     )''')
     conn.commit()
     # Migration: add notes column if missing (for demo/source tagging)
@@ -1457,6 +1504,12 @@ def poll_loop():
         time.sleep(POLL_INTERVAL)
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
+@app.route("/")
+def home():
+    if session.get("user_id"):
+        return redirect("/hub")
+    return send_file(os.path.join(BASE_DIR, "intro.html"))
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "GET":
@@ -1509,15 +1562,6 @@ def register():
 def logout():
     session.clear()
     return redirect("/login")
-
-@app.route("/")
-def home():
-    if not session.get("user_id"):
-        return redirect("/login")
-    html = os.path.join(BASE_DIR, 'nifty_options_dashboard.html')
-    if os.path.exists(html):
-        return send_file(html)
-    return jsonify({"status":"NiftyEdge Pro v3","db":DB_PATH})
 
 @app.route("/api/status")
 def api_status():
@@ -1711,6 +1755,423 @@ def _ensure_poll_running():
 def restart_poll():
     restarted = _ensure_poll_running()
     return jsonify({"restarted": restarted, "msg": "Poll loop restarted" if restarted else "Already running"})
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  PRO — Kite + ML routes
+# ═══════════════════════════════════════════════════════════════════════════════
+
+PRO_TF_MINS = [1, 5, 10, 15, 30, 60]
+_pro_state  = {sym: {} for sym in SYMBOLS}   # sym → {tf_mins: latest_tip_dict}
+_pro_subs   = deque()
+_pro_lock   = threading.Lock()
+_pro_dedup  = {}   # (sym, tf_mins) → last tip created_at ISO
+
+
+def _log_pro_tip(tip: dict) -> int | None:
+    """Insert pro tip into pro_tips table with dedup guard."""
+    key = (tip["symbol"], tip["tf_mins"])
+    last = _pro_dedup.get(key)
+    if last:
+        elapsed = (datetime.utcnow() - datetime.fromisoformat(last)).total_seconds()
+        if elapsed < tip["tf_mins"] * 60 * 0.8:
+            return None
+    now_iso = datetime.utcnow().isoformat()
+    expiry  = (datetime.utcnow() + timedelta(minutes=tip["tf_mins"])).isoformat()
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.execute(
+                """INSERT INTO pro_tips
+                   (symbol,timeframe,tf_mins,direction,instrument,strike,opt_type,
+                    entry,target,sl,rr,confidence,ml_score,model_used,features_json,
+                    spot_at_tip,pcr,iv,created_at,expiry_time)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    tip["symbol"], tip["timeframe"], tip["tf_mins"],
+                    tip["direction"], tip.get("instrument",""), tip.get("strike",0),
+                    tip.get("opt_type",""), tip.get("entry",0), tip.get("target",0),
+                    tip.get("sl",0), tip.get("rr",0), tip.get("confidence",50),
+                    tip.get("ml_score",0), tip.get("model",""),
+                    json.dumps(tip.get("features",{})),
+                    tip.get("spot",0), tip.get("pcr",1.0), tip.get("iv",20.0),
+                    now_iso, expiry,
+                ),
+            )
+            tip_id = cur.lastrowid
+        _pro_dedup[key] = now_iso
+        return tip_id
+    except Exception as e:
+        logging.warning(f"[Pro] log_tip: {e}")
+        return None
+
+
+def _resolve_pro_tips():
+    """Mark expired pro_tips as HIT / NOT_HIT based on final option price."""
+    now_iso = datetime.utcnow().isoformat()
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            rows = conn.execute(
+                "SELECT id,symbol,opt_type,strike,entry,target,sl,tf_mins,features_json "
+                "FROM pro_tips WHERE outcome='PENDING' AND expiry_time<=?", (now_iso,)
+            ).fetchall()
+        for row in rows:
+            tip_id, sym, opt_type, strike, entry, target, sl, tf_mins, feat_json = row
+            outcome    = "EXPIRED"
+            exit_price = 0.0
+            pnl_pct    = 0.0
+            # Try to get current option price from Kite
+            if _kite and _kite.authenticated:
+                try:
+                    inst_key = f"NFO:{sym}{strike}{opt_type}"
+                    ltp_data = _kite.ltp([inst_key])
+                    ltp      = ltp_data.get(inst_key, {}).get("last_price", 0)
+                    if ltp > 0 and entry > 0:
+                        exit_price = ltp
+                        pnl_pct    = (ltp - entry) / entry * 100
+                        if ltp >= target:
+                            outcome = "HIT"
+                        elif ltp <= sl:
+                            outcome = "NOT_HIT"
+                        else:
+                            outcome = "EXPIRED"
+                except Exception:
+                    pass
+            with sqlite3.connect(DB_PATH) as conn:
+                conn.execute(
+                    "UPDATE pro_tips SET outcome=?,exit_price=?,exit_time=?,pnl_pct=? WHERE id=?",
+                    (outcome, exit_price, now_iso, pnl_pct, tip_id),
+                )
+            # Feed outcome back to ML engine
+            if _HAS_ML:
+                try:
+                    feat = json.loads(feat_json or "{}")
+                    ml_outcome = "WIN" if outcome == "HIT" else ("LOSS" if outcome == "NOT_HIT" else "EXPIRED")
+                    _ml_get(sym, tf_mins).record_outcome(feat, ml_outcome)
+                except Exception:
+                    pass
+    except Exception as e:
+        logging.warning(f"[Pro] resolve_tips: {e}")
+
+
+def _pro_build_tip(sym: str, tf_mins: int, candles: list,
+                   spot: float, pcr: float, iv: float) -> dict | None:
+    """Run feature extraction + ML prediction → return tip dict or None."""
+    if not _HAS_ML:
+        return None
+    features = extract_features(candles, pcr=pcr, iv=iv)
+    if not features:
+        return None
+
+    pred = _ml_get(sym, tf_mins).predict(features)
+    direction = pred["direction"]
+    if direction == "NEUTRAL":
+        return None
+
+    # Strike selection: ATM
+    atm_opts = {}
+    if _kite and _kite.authenticated:
+        try:
+            atm_opts = _kite.get_atm_options(sym, spot)
+        except Exception:
+            pass
+
+    opt_type  = "CE" if direction == "BUY" else "PE"
+    opt_info  = atm_opts.get(opt_type, {})
+    strike    = opt_info.get("strike", round(spot / 50) * 50)
+    symbol_str= opt_info.get("tradingsymbol", f"{sym}{int(strike)}{opt_type}")
+
+    # Entry price from Kite LTP or heuristic
+    entry = 0.0
+    if _kite and _kite.authenticated and opt_info.get("token"):
+        try:
+            q = _kite.ltp([f"NFO:{symbol_str}"])
+            entry = q.get(f"NFO:{symbol_str}", {}).get("last_price", 0.0)
+        except Exception:
+            pass
+    if entry <= 0:
+        entry = max(10.0, spot * 0.003)  # rough heuristic
+
+    target = round(entry * 1.30, 2)
+    sl     = round(entry * 0.75, 2)
+    rr     = round((target - entry) / max(entry - sl, 0.01), 2)
+
+    tf_label = f"{tf_mins} Min" if tf_mins < 60 else f"{tf_mins//60} Hour"
+
+    return {
+        "symbol":     sym,
+        "timeframe":  tf_label,
+        "tf_mins":    tf_mins,
+        "direction":  direction,
+        "instrument": symbol_str,
+        "strike":     strike,
+        "opt_type":   opt_type,
+        "entry":      entry,
+        "target":     target,
+        "sl":         sl,
+        "rr":         rr,
+        "confidence": pred["confidence"],
+        "ml_score":   pred["ml_score"],
+        "model":      pred["model"],
+        "features":   features,
+        "spot":       spot,
+        "pcr":        pcr,
+        "iv":         iv,
+    }
+
+
+_pro_poll_thread = None
+_pro_poll_running = False
+
+
+def _pro_poll_loop():
+    global _pro_poll_running
+    _pro_poll_running = True
+    last_resolve = 0.0
+    logging.info("[Pro] Poll loop started")
+    while _pro_poll_running:
+        try:
+            if not (_kite and _kite.authenticated):
+                time.sleep(10)
+                continue
+
+            for sym in SYMBOLS:
+                token = 256265 if sym == "NIFTY" else 260105
+                spot_key = f"NSE:{'NIFTY 50' if sym=='NIFTY' else 'NIFTY BANK'}"
+                try:
+                    ltp_data = _kite.ltp([spot_key])
+                    spot = ltp_data.get(spot_key, {}).get("last_price", 0.0)
+                except Exception:
+                    spot = 0.0
+
+                pcr = 1.0; iv = 20.0
+
+                snap = {}
+                for tf in PRO_TF_MINS:
+                    try:
+                        candles = _kite.fetch_candles(token, tf)
+                        tip = _pro_build_tip(sym, tf, candles, spot, pcr, iv)
+                        if tip:
+                            snap[tf] = tip
+                            _log_pro_tip(tip)
+                    except Exception as e:
+                        logging.debug(f"[Pro] {sym} {tf}m: {e}")
+
+                with _pro_lock:
+                    _pro_state[sym] = snap
+
+            # Publish to SSE subscribers
+            payload = json.dumps({"type": "update", "state": _pro_state, "ts": datetime.utcnow().isoformat()})
+            dead = []
+            with _pro_lock:
+                for q in list(_pro_subs):
+                    try:
+                        q.append(payload)
+                    except Exception:
+                        dead.append(q)
+                for d in dead:
+                    try: _pro_subs.remove(d)
+                    except: pass
+
+            # Resolve expired tips every 60 s
+            if time.time() - last_resolve > 60:
+                _resolve_pro_tips()
+                last_resolve = time.time()
+
+        except Exception as e:
+            logging.error(f"[Pro] Poll error: {e}")
+
+        time.sleep(10)
+
+
+def _start_pro_poll():
+    global _pro_poll_thread
+    if _pro_poll_thread and _pro_poll_thread.is_alive():
+        return
+    _pro_poll_thread = threading.Thread(target=_pro_poll_loop, name="pro_poll", daemon=True)
+    _pro_poll_thread.start()
+
+
+# ── Pro page & Kite config ─────────────────────────────────────────────
+
+@app.route("/intro")
+def intro():
+    return send_file(os.path.join(BASE_DIR, "intro.html"))
+
+@app.route("/hub")
+def hub():
+    if not session.get("user_id"):
+        return redirect("/login")
+    return send_file(os.path.join(BASE_DIR, "hub.html"))
+
+@app.route("/demo")
+def demo_page():
+    if not session.get("user_id"):
+        return redirect("/login")
+    html = os.path.join(BASE_DIR, "nifty_options_dashboard.html")
+    if os.path.exists(html):
+        return send_file(html)
+    return redirect("/hub")
+
+@app.route("/pro")
+def pro_page():
+    if not session.get("user_id"):
+        return redirect("/login")
+    return send_file(os.path.join(BASE_DIR, "pro_dashboard.html"))
+
+@app.route("/api/kite/status")
+def kite_status():
+    if not session.get("user_id"):
+        return jsonify({"error": "Unauthorized"}), 401
+    if not _kite:
+        return jsonify({"library": False, "configured": False, "authenticated": False})
+    return jsonify(_kite.status())
+
+@app.route("/api/kite/config", methods=["POST"])
+def kite_config_save():
+    if not session.get("user_id"):
+        return jsonify({"error": "Unauthorized"}), 401
+    data       = request.get_json(silent=True) or {}
+    api_key    = (data.get("api_key")    or "").strip()
+    api_secret = (data.get("api_secret") or "").strip()
+    if not api_key or not api_secret:
+        return jsonify({"error": "api_key and api_secret required"}), 400
+    if not _kite:
+        return jsonify({"error": "kiteconnect library not installed"}), 503
+    _kite.save_config(api_key, api_secret)
+    _start_pro_poll()
+    return jsonify({"success": True, "login_url": _kite.login_url()})
+
+@app.route("/api/kite/login-url")
+def kite_login_url():
+    if not session.get("user_id"):
+        return jsonify({"error": "Unauthorized"}), 401
+    if not _kite or not _kite.configured:
+        return jsonify({"error": "Kite not configured"}), 400
+    return jsonify({"url": _kite.login_url()})
+
+@app.route("/kite/callback")
+def kite_callback():
+    req_token = request.args.get("request_token")
+    status    = request.args.get("status")
+    if status != "success" or not req_token:
+        return redirect("/pro?kite_error=1")
+    try:
+        _kite.generate_session(req_token)
+        _start_pro_poll()
+        return redirect("/pro?kite_connected=1")
+    except Exception as e:
+        logging.error(f"[Kite] callback: {e}")
+        return redirect("/pro?kite_error=1")
+
+@app.route("/api/pro/snapshot/<symbol>")
+def pro_snapshot(symbol):
+    if not session.get("user_id"):
+        return jsonify({"error": "Unauthorized"}), 401
+    sym = symbol.upper()
+    if sym not in SYMBOLS:
+        return jsonify({"error": "Unknown symbol"}), 400
+    with _pro_lock:
+        snap = dict(_pro_state.get(sym, {}))
+    return jsonify({"symbol": sym, "tips": snap, "kite": _kite.status() if _kite else {}})
+
+@app.route("/stream/pro")
+def pro_stream():
+    if not session.get("user_id"):
+        return Response("Unauthorized", status=401)
+    client_q: deque = deque(maxlen=10)
+    with _pro_lock:
+        _pro_subs.append(client_q)
+
+    def gen():
+        yield f"data: {json.dumps({'type':'connected'})}\n\n"
+        with _pro_lock:
+            snap = {sym: dict(_pro_state[sym]) for sym in SYMBOLS}
+        yield f"data: {json.dumps({'type':'init','state':snap})}\n\n"
+        while True:
+            if client_q:
+                yield f"data: {client_q.popleft()}\n\n"
+            else:
+                yield ": ping\n\n"
+            time.sleep(1)
+
+    return Response(gen(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+@app.route("/api/pro/tips")
+def get_pro_tips():
+    if not session.get("user_id"):
+        return jsonify({"error": "Unauthorized"}), 401
+    sym   = request.args.get("symbol", "NIFTY").upper()
+    limit = min(int(request.args.get("limit", 50)), 200)
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(
+            """SELECT id,symbol,timeframe,direction,instrument,strike,opt_type,
+                      entry,target,sl,rr,confidence,ml_score,model_used,
+                      spot_at_tip,created_at,expiry_time,outcome,exit_price,pnl_pct
+               FROM pro_tips WHERE symbol=? ORDER BY id DESC LIMIT ?""",
+            (sym, limit),
+        ).fetchall()
+    cols = ["id","symbol","timeframe","direction","instrument","strike","opt_type",
+            "entry","target","sl","rr","confidence","ml_score","model_used",
+            "spot_at_tip","created_at","expiry_time","outcome","exit_price","pnl_pct"]
+    return jsonify([dict(zip(cols, r)) for r in rows])
+
+@app.route("/api/pro/accuracy")
+def pro_accuracy():
+    if not session.get("user_id"):
+        return jsonify({"error": "Unauthorized"}), 401
+    sym = request.args.get("symbol", "NIFTY").upper()
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(
+            """SELECT timeframe,
+                      COUNT(*) total,
+                      SUM(CASE WHEN outcome='HIT'     THEN 1 ELSE 0 END) hits,
+                      SUM(CASE WHEN outcome='NOT_HIT' THEN 1 ELSE 0 END) misses,
+                      AVG(pnl_pct) avg_pnl
+               FROM pro_tips WHERE symbol=? AND outcome!='PENDING'
+               GROUP BY timeframe""",
+            (sym,),
+        ).fetchall()
+    data = []
+    for tf, total, hits, misses, avg_pnl in rows:
+        rate = round(hits / total * 100, 1) if total else 0
+        data.append({"timeframe": tf, "total": total, "hits": hits,
+                     "misses": misses, "hit_rate": rate, "avg_pnl": round(avg_pnl or 0, 2)})
+    overall_total = sum(r["total"] for r in data)
+    overall_hits  = sum(r["hits"]  for r in data)
+    overall_rate  = round(overall_hits / overall_total * 100, 1) if overall_total else 0
+    return jsonify({
+        "symbol": sym, "by_timeframe": data,
+        "overall": {"total": overall_total, "hits": overall_hits, "hit_rate": overall_rate},
+    })
+
+@app.route("/api/pro/tip/<int:tip_id>/outcome", methods=["POST"])
+def mark_pro_outcome(tip_id):
+    if not session.get("user_id"):
+        return jsonify({"error": "Unauthorized"}), 401
+    data    = request.get_json(silent=True) or {}
+    outcome = (data.get("outcome") or "").upper()
+    if outcome not in ("HIT", "NOT_HIT", "EXPIRED"):
+        return jsonify({"error": "outcome must be HIT / NOT_HIT / EXPIRED"}), 400
+    now = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "UPDATE pro_tips SET outcome=?,exit_time=? WHERE id=?",
+            (outcome, now, tip_id),
+        )
+    return jsonify({"success": True})
+
+@app.route("/api/auth/me")
+def auth_me():
+    if not session.get("user_id"):
+        return jsonify({"logged_in": False}), 401
+    return jsonify({
+        "logged_in": True,
+        "user_id":  session["user_id"],
+        "username": session.get("username"),
+        "role":     session.get("role"),
+    })
+
 
 # When imported by gunicorn, run startup in the worker process
 if __name__ != "__main__":

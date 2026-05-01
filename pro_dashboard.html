@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NiftyEdge Pro — ML Dashboard</title>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Exo+2:wght@300;400;600&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    :root{
+      --bg:#050510;--panel:rgba(8,12,40,.92);--card:rgba(6,9,30,.95);
+      --cyan:#00f5ff;--green:#00ff88;--purple:#7b2fff;--pink:#ff2d78;--amber:#ffb300;--red:#ff4466;
+      --text:#ccd6f6;--dim:#8892b0;--border:rgba(0,245,255,.13);
+    }
+    html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Exo 2',sans-serif;overflow-x:hidden}
+    #bg-cv{position:fixed;inset:0;z-index:0;pointer-events:none}
+
+    /* ── TOP BAR ───────────────────────────────────────────────── */
+    .topbar{
+      position:fixed;top:0;left:0;right:0;z-index:200;height:56px;
+      display:flex;align-items:center;justify-content:space-between;
+      padding:0 24px;background:rgba(5,5,16,.82);
+      backdrop-filter:blur(20px);border-bottom:1px solid var(--border);
+    }
+    .tb-left{display:flex;align-items:center;gap:16px}
+    .logo-row{display:flex;align-items:center;gap:8px;text-decoration:none}
+    .bolt{font-size:1.4rem;filter:drop-shadow(0 0 10px var(--cyan))}
+    .logo-txt{display:flex;flex-direction:column;line-height:1.1}
+    .lm{font-family:'Orbitron',monospace;font-size:.9rem;font-weight:900;
+        color:#fff;letter-spacing:2px;text-shadow:0 0 14px var(--cyan)}
+    .lp{font-size:.55rem;color:var(--purple);letter-spacing:4px;font-weight:700}
+
+    /* Kite status pill */
+    .kite-pill{
+      display:flex;align-items:center;gap:6px;padding:4px 12px;border-radius:16px;
+      font-family:'Share Tech Mono',monospace;font-size:.68rem;letter-spacing:1px;
+      border:1px solid;cursor:default;transition:all .3s;
+    }
+    .kite-pill.connected{color:var(--green);border-color:rgba(0,255,136,.3);background:rgba(0,255,136,.07)}
+    .kite-pill.disconnected{color:var(--red);border-color:rgba(255,68,102,.3);background:rgba(255,68,102,.07);cursor:pointer}
+    .kite-pill.disconnected:hover{background:rgba(255,68,102,.14)}
+    .k-dot{width:7px;height:7px;border-radius:50%;animation:kdot 1.8s ease-in-out infinite}
+    .connected .k-dot{background:var(--green);box-shadow:0 0 8px var(--green)}
+    .disconnected .k-dot{background:var(--red);animation:none}
+    @keyframes kdot{0%,100%{opacity:.6}50%{opacity:1;box-shadow:0 0 14px var(--green)}}
+
+    .tb-right{display:flex;align-items:center;gap:12px}
+    .sym-tabs{display:flex;gap:4px}
+    .sym-btn{
+      padding:5px 14px;background:none;border:1px solid rgba(0,245,255,.18);
+      border-radius:6px;color:var(--dim);font-family:'Orbitron',monospace;
+      font-size:.65rem;font-weight:700;letter-spacing:2px;cursor:pointer;transition:all .25s;
+    }
+    .sym-btn.active{color:var(--cyan);border-color:rgba(0,245,255,.45);
+                    background:rgba(0,245,255,.08);box-shadow:0 0 12px rgba(0,245,255,.15)}
+    .spot-box{
+      font-family:'Orbitron',monospace;font-size:.85rem;font-weight:700;
+      color:#fff;padding:5px 14px;border:1px solid var(--border);border-radius:6px;
+      background:rgba(0,0,0,.3);min-width:110px;text-align:center;
+    }
+    .spot-up{color:var(--green)}.spot-dn{color:var(--red)}
+    .user-chip{font-family:'Share Tech Mono',monospace;font-size:.72rem;color:var(--dim)}
+    .logout-btn{
+      padding:5px 14px;background:none;border:1px solid rgba(255,68,102,.25);
+      border-radius:6px;color:var(--red);font-family:'Share Tech Mono',monospace;
+      font-size:.68rem;cursor:pointer;letter-spacing:1px;transition:all .3s;
+    }
+    .logout-btn:hover{background:rgba(255,68,102,.08)}
+    .hub-btn{
+      padding:5px 14px;background:none;border:1px solid var(--border);
+      border-radius:6px;color:var(--dim);font-family:'Share Tech Mono',monospace;
+      font-size:.68rem;cursor:pointer;letter-spacing:1px;transition:all .3s;text-decoration:none;
+    }
+    .hub-btn:hover{color:var(--cyan);border-color:rgba(0,245,255,.3)}
+
+    /* ── LAYOUT ────────────────────────────────────────────────── */
+    .layout{
+      position:relative;z-index:1;display:grid;
+      grid-template-columns:260px 1fr;
+      min-height:100vh;padding-top:56px;
+    }
+    @media(max-width:900px){.layout{grid-template-columns:1fr}}
+
+    /* ── SIDEBAR ───────────────────────────────────────────────── */
+    .sidebar{
+      background:var(--panel);border-right:1px solid var(--border);
+      padding:20px 16px;display:flex;flex-direction:column;gap:20px;
+      position:sticky;top:56px;height:calc(100vh - 56px);overflow-y:auto;
+    }
+    @media(max-width:900px){.sidebar{display:none}}
+
+    .sb-section{background:var(--card);border-radius:12px;padding:16px;border:1px solid var(--border)}
+    .sb-title{font-family:'Orbitron',monospace;font-size:.65rem;font-weight:700;
+              letter-spacing:3px;color:var(--dim);margin-bottom:12px;text-transform:uppercase}
+
+    /* Win ratio donut */
+    .donut-wrap{display:flex;flex-direction:column;align-items:center;gap:12px}
+    .donut-svg{width:110px;height:110px}
+    .donut-track{fill:none;stroke:rgba(0,245,255,.1);stroke-width:12}
+    .donut-fill{fill:none;stroke-width:12;stroke-linecap:round;
+                transition:stroke-dashoffset .8s cubic-bezier(.4,0,.2,1)}
+    .donut-center{
+      font-family:'Orbitron',monospace;font-size:1.3rem;font-weight:900;
+      fill:#fff;text-anchor:middle;dominant-baseline:middle;
+    }
+    .donut-sub{font-family:'Share Tech Mono',monospace;font-size:.52rem;fill:var(--dim);
+               text-anchor:middle;dominant-baseline:middle}
+    .stat-row{display:flex;justify-content:space-between;padding:5px 0;
+              border-bottom:1px solid rgba(255,255,255,.04);font-size:.8rem}
+    .stat-row:last-child{border:none}
+    .stat-lbl{color:var(--dim)}
+    .stat-val{font-family:'Share Tech Mono',monospace;color:var(--text)}
+    .stat-val.g{color:var(--green)}.stat-val.r{color:var(--red)}.stat-val.a{color:var(--amber)}
+
+    /* Kite setup card in sidebar */
+    .setup-mini{display:flex;flex-direction:column;gap:8px}
+    .inp-mini{
+      width:100%;padding:8px 12px;background:rgba(0,0,0,.4);
+      border:1px solid rgba(0,245,255,.15);border-radius:8px;
+      color:var(--text);font-family:'Share Tech Mono',monospace;font-size:.72rem;outline:none;
+    }
+    .inp-mini:focus{border-color:var(--cyan)}
+    .inp-mini::placeholder{color:var(--dim)}
+    .btn-mini{
+      width:100%;padding:8px;background:rgba(0,245,255,.1);border:1px solid rgba(0,245,255,.3);
+      border-radius:8px;color:var(--cyan);font-family:'Orbitron',monospace;
+      font-size:.65rem;font-weight:700;letter-spacing:2px;cursor:pointer;transition:all .3s;
+    }
+    .btn-mini:hover{background:rgba(0,245,255,.2);box-shadow:0 0 16px rgba(0,245,255,.2)}
+    .btn-mini-green{background:rgba(0,255,136,.1);border-color:rgba(0,255,136,.3);color:var(--green)}
+    .btn-mini-green:hover{background:rgba(0,255,136,.2)}
+    .mini-msg{font-size:.7rem;text-align:center;min-height:16px;margin-top:4px}
+
+    /* ── MAIN CONTENT ──────────────────────────────────────────── */
+    .main{padding:20px;display:flex;flex-direction:column;gap:20px;min-width:0}
+
+    /* Kite setup banner (shown when not connected) */
+    .setup-banner{
+      background:linear-gradient(135deg,rgba(123,47,255,.1),rgba(0,245,255,.06));
+      border:1px solid rgba(123,47,255,.3);border-radius:14px;padding:24px;
+      display:none;
+    }
+    .setup-banner.show{display:block}
+    .sb-head{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+    .sb-head h3{font-family:'Orbitron',monospace;font-size:.9rem;font-weight:700;
+                color:var(--purple);letter-spacing:2px}
+    .setup-grid{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end}
+    @media(max-width:600px){.setup-grid{grid-template-columns:1fr}}
+    .setup-inp{
+      width:100%;padding:10px 14px;background:rgba(0,0,0,.4);
+      border:1px solid rgba(123,47,255,.25);border-radius:9px;color:var(--text);
+      font-family:'Share Tech Mono',monospace;font-size:.8rem;outline:none;
+    }
+    .setup-inp:focus{border-color:var(--purple)}
+    .setup-inp::placeholder{color:var(--dim)}
+    .setup-lbl{font-size:.7rem;color:var(--dim);margin-bottom:4px;font-family:'Share Tech Mono',monospace;letter-spacing:1px}
+    .btn-setup{
+      padding:10px 22px;background:linear-gradient(135deg,rgba(123,47,255,.2),rgba(0,245,255,.1));
+      border:1px solid rgba(123,47,255,.4);border-radius:9px;color:#fff;
+      font-family:'Orbitron',monospace;font-size:.72rem;font-weight:700;letter-spacing:2px;
+      cursor:pointer;white-space:nowrap;transition:all .3s;
+    }
+    .btn-setup:hover{background:linear-gradient(135deg,rgba(123,47,255,.35),rgba(0,245,255,.2));
+                     box-shadow:0 0 24px rgba(123,47,255,.25)}
+    .setup-msg{margin-top:10px;font-size:.78rem;min-height:18px}
+
+    /* Section headers */
+    .sec-hdr{
+      display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;
+    }
+    .sec-hdr h2{font-family:'Orbitron',monospace;font-size:.8rem;font-weight:700;
+                letter-spacing:3px;color:var(--cyan);text-shadow:0 0 10px rgba(0,245,255,.4)}
+    .sec-hdr span{font-family:'Share Tech Mono',monospace;font-size:.68rem;color:var(--dim)}
+
+    /* ── ML SIGNALS GRID ───────────────────────────────────────── */
+    .signals-grid{
+      display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;
+    }
+    .sig-card{
+      background:var(--card);border-radius:12px;padding:18px 16px;
+      border:1px solid;position:relative;overflow:hidden;transition:transform .25s,box-shadow .25s;
+    }
+    .sig-card:hover{transform:translateY(-4px)}
+    .sig-card.buy{border-color:rgba(0,255,136,.25)}
+    .sig-card.buy:hover{box-shadow:0 12px 36px rgba(0,255,136,.18)}
+    .sig-card.sell{border-color:rgba(255,68,102,.25)}
+    .sig-card.sell:hover{box-shadow:0 12px 36px rgba(255,68,102,.18)}
+    .sig-card.neutral{border-color:rgba(255,179,0,.2)}
+    .sig-card.neutral:hover{box-shadow:0 12px 36px rgba(255,179,0,.12)}
+    .sig-card.empty{border-color:rgba(136,146,176,.12);opacity:.55}
+
+    .sig-blob{position:absolute;width:100px;height:100px;border-radius:50%;
+              top:-40px;right:-30px;filter:blur(40px);opacity:.18;pointer-events:none}
+    .buy  .sig-blob{background:var(--green)}
+    .sell .sig-blob{background:var(--red)}
+    .neutral .sig-blob{background:var(--amber)}
+
+    .sig-tf{font-family:'Share Tech Mono',monospace;font-size:.65rem;color:var(--dim);letter-spacing:2px;margin-bottom:8px}
+    .sig-dir{
+      font-family:'Orbitron',monospace;font-size:1.4rem;font-weight:900;letter-spacing:3px;margin-bottom:8px;
+    }
+    .buy  .sig-dir{color:var(--green);text-shadow:0 0 16px var(--green)}
+    .sell .sig-dir{color:var(--red);text-shadow:0 0 16px var(--red)}
+    .neutral .sig-dir{color:var(--amber);text-shadow:0 0 12px var(--amber)}
+    .empty .sig-dir{color:var(--dim)}
+
+    /* Confidence bar */
+    .conf-wrap{margin-bottom:10px}
+    .conf-label{display:flex;justify-content:space-between;font-size:.7rem;color:var(--dim);margin-bottom:4px}
+    .conf-bar{height:4px;background:rgba(255,255,255,.08);border-radius:4px;overflow:hidden}
+    .conf-fill{height:100%;border-radius:4px;transition:width .8s ease}
+    .buy  .conf-fill{background:linear-gradient(90deg,rgba(0,255,136,.5),var(--green))}
+    .sell .conf-fill{background:linear-gradient(90deg,rgba(255,68,102,.5),var(--red))}
+    .neutral .conf-fill{background:linear-gradient(90deg,rgba(255,179,0,.5),var(--amber))}
+
+    .sig-rows{display:flex;flex-direction:column;gap:3px}
+    .sig-row{display:flex;justify-content:space-between;font-size:.72rem}
+    .sig-row .lbl{color:var(--dim)}
+    .sig-row .val{font-family:'Share Tech Mono',monospace;color:var(--text)}
+    .sig-model{font-size:.62rem;color:var(--dim);margin-top:8px;font-style:italic;
+               white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+    /* ── TIP HISTORY TABLE ─────────────────────────────────────── */
+    .tbl-wrap{
+      background:var(--card);border-radius:14px;border:1px solid var(--border);overflow:hidden;
+    }
+    .tbl-head{
+      display:flex;align-items:center;justify-content:space-between;
+      padding:14px 18px;border-bottom:1px solid var(--border);
+      background:rgba(0,0,0,.3);
+    }
+    .tbl-head h3{font-family:'Orbitron',monospace;font-size:.75rem;font-weight:700;
+                 letter-spacing:2px;color:var(--cyan)}
+    .filter-btns{display:flex;gap:6px}
+    .fbtn{
+      padding:4px 10px;background:none;border:1px solid var(--border);border-radius:5px;
+      color:var(--dim);font-family:'Share Tech Mono',monospace;font-size:.65rem;
+      cursor:pointer;transition:all .25s;
+    }
+    .fbtn.on{color:var(--cyan);border-color:rgba(0,245,255,.4);background:rgba(0,245,255,.07)}
+    table{width:100%;border-collapse:collapse}
+    thead th{
+      padding:10px 12px;text-align:left;font-family:'Share Tech Mono',monospace;
+      font-size:.65rem;color:var(--dim);letter-spacing:2px;
+      border-bottom:1px solid var(--border);white-space:nowrap;
+    }
+    tbody tr{border-bottom:1px solid rgba(255,255,255,.04);transition:background .2s}
+    tbody tr:hover{background:rgba(0,245,255,.03)}
+    tbody tr:last-child{border:none}
+    td{padding:9px 12px;font-size:.78rem;white-space:nowrap}
+    td.mono{font-family:'Share Tech Mono',monospace}
+
+    .badge{
+      display:inline-block;padding:2px 8px;border-radius:5px;
+      font-family:'Share Tech Mono',monospace;font-size:.62rem;font-weight:700;letter-spacing:1px;
+    }
+    .b-buy{background:rgba(0,255,136,.12);color:var(--green);border:1px solid rgba(0,255,136,.25)}
+    .b-sell{background:rgba(255,68,102,.12);color:var(--red);border:1px solid rgba(255,68,102,.25)}
+    .b-neutral{background:rgba(255,179,0,.12);color:var(--amber);border:1px solid rgba(255,179,0,.25)}
+    .b-hit{background:rgba(0,255,136,.1);color:var(--green);border:1px solid rgba(0,255,136,.2)}
+    .b-miss{background:rgba(255,68,102,.1);color:var(--red);border:1px solid rgba(255,68,102,.2)}
+    .b-pending{background:rgba(255,179,0,.08);color:var(--amber);border:1px solid rgba(255,179,0,.2)}
+    .b-expired{background:rgba(136,146,176,.1);color:var(--dim);border:1px solid rgba(136,146,176,.2)}
+
+    .empty-row td{text-align:center;color:var(--dim);padding:32px;
+                  font-family:'Share Tech Mono',monospace;font-size:.78rem;letter-spacing:1px}
+
+    /* mobile: hide less important columns */
+    @media(max-width:700px){
+      .hide-sm{display:none}
+    }
+
+    /* ── ACCURACY BANDS ────────────────────────────────────────── */
+    .acc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
+    .acc-card{
+      background:var(--card);border-radius:10px;padding:14px;border:1px solid var(--border);
+      text-align:center;
+    }
+    .acc-tf{font-family:'Orbitron',monospace;font-size:.65rem;color:var(--dim);letter-spacing:2px;margin-bottom:8px}
+    .acc-rate{font-family:'Orbitron',monospace;font-size:1.5rem;font-weight:900;color:#fff;margin-bottom:4px}
+    .acc-rate.hi{color:var(--green);text-shadow:0 0 12px rgba(0,255,136,.4)}
+    .acc-rate.lo{color:var(--red)}
+    .acc-sub{font-size:.72rem;color:var(--dim)}
+    .acc-bar{height:3px;background:rgba(255,255,255,.07);border-radius:3px;margin-top:8px;overflow:hidden}
+    .acc-bar-fill{height:100%;border-radius:3px;transition:width .8s ease}
+
+    /* Scroll fade-in */
+    .fade-in{opacity:0;transform:translateY(16px);transition:opacity .5s,transform .5s}
+    .fade-in.visible{opacity:1;transform:none}
+
+    /* Notification toast */
+    .toast{
+      position:fixed;bottom:24px;right:24px;z-index:999;
+      background:rgba(8,12,40,.96);border:1px solid var(--border);border-radius:10px;
+      padding:12px 20px;font-family:'Share Tech Mono',monospace;font-size:.78rem;
+      transform:translateY(80px);opacity:0;transition:all .35s;pointer-events:none;
+    }
+    .toast.show{transform:translateY(0);opacity:1}
+    .toast.ok{border-color:rgba(0,255,136,.3);color:var(--green)}
+    .toast.err{border-color:rgba(255,68,102,.3);color:var(--red)}
+  </style>
+</head>
+<body>
+<canvas id="bg-cv"></canvas>
+
+<!-- TOP BAR -->
+<header class="topbar">
+  <div class="tb-left">
+    <a class="logo-row" href="/hub">
+      <span class="bolt">⚡</span>
+      <div class="logo-txt">
+        <span class="lm">NiftyEdge</span>
+        <span class="lp">PRO</span>
+      </div>
+    </a>
+    <div class="kite-pill disconnected" id="kite-pill" onclick="toggleSetup()">
+      <div class="k-dot"></div>
+      <span id="kite-status-txt">Kite Disconnected</span>
+    </div>
+  </div>
+  <div class="tb-right">
+    <div class="sym-tabs">
+      <button class="sym-btn active" onclick="setSym('NIFTY')"   id="sb-nifty">NIFTY</button>
+      <button class="sym-btn"        onclick="setSym('BANKNIFTY')" id="sb-bnf">BANKNIFTY</button>
+    </div>
+    <div class="spot-box" id="spot-box">— —</div>
+    <a class="hub-btn" href="/hub">⬡ Hub</a>
+    <span class="user-chip" id="uname-top">…</span>
+    <button class="logout-btn" onclick="location.href='/logout'">Logout</button>
+  </div>
+</header>
+
+<div class="layout">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+
+    <!-- Win ratio donut -->
+    <div class="sb-section">
+      <div class="sb-title">Win Ratio</div>
+      <div class="donut-wrap">
+        <svg class="donut-svg" viewBox="0 0 110 110">
+          <circle class="donut-track" cx="55" cy="55" r="42"/>
+          <circle class="donut-fill" id="donut-arc" cx="55" cy="55" r="42"
+                  stroke="url(#dg)" stroke-dasharray="263.9" stroke-dashoffset="263.9"
+                  transform="rotate(-90 55 55)"/>
+          <defs>
+            <linearGradient id="dg" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#00ff88"/>
+              <stop offset="100%" stop-color="#00f5ff"/>
+            </linearGradient>
+          </defs>
+          <text class="donut-center" x="55" y="50" id="donut-pct">0%</text>
+          <text class="donut-sub"    x="55" y="63" id="donut-lbl">Hit Rate</text>
+        </svg>
+        <div style="width:100%">
+          <div class="stat-row"><span class="stat-lbl">Total Tips</span><span class="stat-val" id="s-total">0</span></div>
+          <div class="stat-row"><span class="stat-lbl">Hit</span><span class="stat-val g" id="s-hit">0</span></div>
+          <div class="stat-row"><span class="stat-lbl">Not Hit</span><span class="stat-val r" id="s-miss">0</span></div>
+          <div class="stat-row"><span class="stat-lbl">Pending</span><span class="stat-val a" id="s-pend">0</span></div>
+          <div class="stat-row"><span class="stat-lbl">Avg P&amp;L</span><span class="stat-val" id="s-pnl">—</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Kite mini-setup -->
+    <div class="sb-section" id="kite-mini-setup">
+      <div class="sb-title">Kite Connect</div>
+      <div class="setup-mini">
+        <input class="inp-mini" id="m-key"    placeholder="API Key"    type="text">
+        <input class="inp-mini" id="m-secret" placeholder="API Secret" type="password">
+        <button class="btn-mini" onclick="miniSave()">Save &amp; Get Login URL</button>
+        <a class="btn-mini btn-mini-green" id="m-login-link" href="#" style="display:none;text-align:center;text-decoration:none">
+          Login with Kite →
+        </a>
+        <div class="mini-msg" id="m-msg"></div>
+      </div>
+    </div>
+
+    <!-- ML model info -->
+    <div class="sb-section">
+      <div class="sb-title">ML Models</div>
+      <div class="stat-row"><span class="stat-lbl">Primary</span><span class="stat-val" style="font-size:.68rem">Random Forest</span></div>
+      <div class="stat-row"><span class="stat-lbl">Secondary</span><span class="stat-val" style="font-size:.68rem">XGBoost</span></div>
+      <div class="stat-row"><span class="stat-lbl">Features</span><span class="stat-val">13</span></div>
+      <div class="stat-row"><span class="stat-lbl">Timeframes</span><span class="stat-val">6</span></div>
+      <div class="stat-row"><span class="stat-lbl">Mode</span><span class="stat-val a" id="ml-mode">Rules</span></div>
+    </div>
+
+  </aside>
+
+  <!-- MAIN -->
+  <main class="main">
+
+    <!-- Kite setup banner -->
+    <div class="setup-banner" id="setup-banner">
+      <div class="sb-head">
+        <span style="font-size:1.4rem">🔌</span>
+        <div>
+          <h3>Connect Kite API to enable live ML signals</h3>
+          <p style="font-size:.78rem;color:var(--dim);margin-top:3px">
+            Get your API key from <strong style="color:var(--purple)">kite.trade/login</strong> → My Profile → Apps
+          </p>
+        </div>
+      </div>
+      <div class="setup-grid">
+        <div>
+          <div class="setup-lbl">API KEY</div>
+          <input class="setup-inp" id="b-key"    placeholder="xxxxxxxx" type="text">
+        </div>
+        <div>
+          <div class="setup-lbl">API SECRET</div>
+          <input class="setup-inp" id="b-secret" placeholder="xxxxxxxxxxxxxxxx" type="password">
+        </div>
+        <button class="btn-setup" onclick="bannerSave()">Save &amp; Connect →</button>
+      </div>
+      <a id="b-login-link" href="#" style="display:none">
+        <button class="btn-setup" style="margin-top:10px;background:rgba(0,255,136,.12);border-color:rgba(0,255,136,.3);color:var(--green)">
+          🔑 Login with Zerodha Kite →
+        </button>
+      </a>
+      <div class="setup-msg" id="b-msg"></div>
+    </div>
+
+    <!-- ML Signals -->
+    <div class="fade-in">
+      <div class="sec-hdr">
+        <h2>ML SIGNALS — <span id="sym-label">NIFTY</span></h2>
+        <span id="last-update">Waiting for data…</span>
+      </div>
+      <div class="signals-grid" id="signals-grid">
+        <!-- populated by JS -->
+      </div>
+    </div>
+
+    <!-- Accuracy by timeframe -->
+    <div class="fade-in">
+      <div class="sec-hdr">
+        <h2>HIT RATE BY TIMEFRAME</h2>
+        <span id="acc-symbol">NIFTY</span>
+      </div>
+      <div class="acc-grid" id="acc-grid">
+        <!-- populated by JS -->
+      </div>
+    </div>
+
+    <!-- Tip history -->
+    <div class="fade-in">
+      <div class="tbl-wrap">
+        <div class="tbl-head">
+          <h3>TIP HISTORY</h3>
+          <div class="filter-btns">
+            <button class="fbtn on" onclick="setFilter('ALL',this)">ALL</button>
+            <button class="fbtn"    onclick="setFilter('HIT',this)">HIT</button>
+            <button class="fbtn"    onclick="setFilter('NOT_HIT',this)">MISS</button>
+            <button class="fbtn"    onclick="setFilter('PENDING',this)">PENDING</button>
+          </div>
+        </div>
+        <div style="overflow-x:auto">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>TF</th>
+                <th>Dir</th>
+                <th class="hide-sm">Instrument</th>
+                <th>Entry</th>
+                <th>Target</th>
+                <th class="hide-sm">SL</th>
+                <th>Conf%</th>
+                <th>Outcome</th>
+                <th class="hide-sm">P&amp;L%</th>
+              </tr>
+            </thead>
+            <tbody id="tip-tbody">
+              <tr class="empty-row"><td colspan="10">No tips yet — connect Kite to start receiving signals</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+/* ── Canvas background ──────────────────────────────────────────── */
+(function(){
+  const cv=document.getElementById('bg-cv'),ctx=cv.getContext('2d');let W,H,pts=[];
+  const C=['#00f5ff','#00f5ff','#7b2fff','#00ff88','#ff2d78'];
+  function resize(){W=cv.width=window.innerWidth;H=cv.height=window.innerHeight;
+    pts=Array.from({length:Math.min(100,Math.floor(W*H/12000))},()=>mk(true))}
+  function mk(i){return{x:i?Math.random()*W:-4,y:Math.random()*H,
+    vx:(Math.random()-.5)*.4,vy:(Math.random()-.5)*.38,r:Math.random()*1.6+.6,
+    c:C[Math.floor(Math.random()*C.length)],a:Math.random()*.45+.12}}
+  function frame(){ctx.clearRect(0,0,W,H);
+    ctx.strokeStyle='rgba(0,245,255,0.028)';ctx.lineWidth=1;
+    for(let x=0;x<W;x+=70){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke()}
+    for(let y=0;y<H;y+=70){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke()}
+    pts.forEach(p=>{p.x+=p.vx;p.y+=p.vy;
+      if(p.x<-10||p.x>W+10||p.y<-10||p.y>H+10)Object.assign(p,mk(false));
+      ctx.save();ctx.globalAlpha=p.a;ctx.shadowBlur=8;ctx.shadowColor=p.c;
+      ctx.fillStyle=p.c;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill();ctx.restore()});
+    requestAnimationFrame(frame)}
+  window.addEventListener('resize',resize);resize();frame();
+})();
+
+/* ── State ─────────────────────────────────────────────────────── */
+let SYM      = 'NIFTY';
+let tips_all = [];
+let filter   = 'ALL';
+const TF_ORDER = [1,5,10,15,30,60];
+const TF_LABEL = {1:'1 MIN',5:'5 MIN',10:'10 MIN',15:'15 MIN',30:'30 MIN',60:'60 MIN'};
+
+/* ── Toast ─────────────────────────────────────────────────────── */
+function toast(msg,type='ok'){
+  const t=document.getElementById('toast');
+  t.textContent=msg;t.className='toast '+type+' show';
+  setTimeout(()=>t.classList.remove('show'),3000);
+}
+
+/* ── Kite status ───────────────────────────────────────────────── */
+async function checkKite(){
+  try{
+    const r=await fetch('/api/kite/status');const d=await r.json();
+    const pill=document.getElementById('kite-pill');
+    const txt =document.getElementById('kite-status-txt');
+    const banner=document.getElementById('setup-banner');
+    const mini=document.getElementById('kite-mini-setup');
+    if(d.authenticated){
+      pill.className='kite-pill connected';txt.textContent='Kite Connected';
+      banner.classList.remove('show');mini.style.display='none';
+    }else{
+      pill.className='kite-pill disconnected';txt.textContent='Kite Disconnected';
+      banner.classList.add('show');mini.style.display='block';
+    }
+    if(!d.library){txt.textContent='kiteconnect not installed';pill.className='kite-pill disconnected'}
+  }catch(e){}
+}
+
+function toggleSetup(){
+  document.getElementById('setup-banner').classList.toggle('show');
+}
+
+/* ── Save Kite config ──────────────────────────────────────────── */
+async function saveKiteConfig(key,secret,msgEl,linkEl){
+  if(!key||!secret){msgEl.textContent='Both API Key and Secret are required';msgEl.style.color='var(--red)';return}
+  msgEl.textContent='Saving…';msgEl.style.color='var(--dim)';
+  try{
+    const r=await fetch('/api/kite/config',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({api_key:key,api_secret:secret})});
+    const d=await r.json();
+    if(d.success&&d.login_url){
+      msgEl.textContent='Saved! Click below to authenticate with Zerodha';
+      msgEl.style.color='var(--green)';
+      if(linkEl){linkEl.href=d.login_url;linkEl.style.display='block'}
+    }else{msgEl.textContent=d.error||'Error saving config';msgEl.style.color='var(--red)'}
+  }catch(e){msgEl.textContent='Network error';msgEl.style.color='var(--red)'}
+}
+
+function bannerSave(){
+  saveKiteConfig(
+    document.getElementById('b-key').value.trim(),
+    document.getElementById('b-secret').value.trim(),
+    document.getElementById('b-msg'),
+    document.getElementById('b-login-link')
+  );
+}
+function miniSave(){
+  saveKiteConfig(
+    document.getElementById('m-key').value.trim(),
+    document.getElementById('m-secret').value.trim(),
+    document.getElementById('m-msg'),
+    document.getElementById('m-login-link')
+  );
+}
+
+/* Check for Kite callback params */
+const urlP=new URLSearchParams(location.search);
+if(urlP.get('kite_connected'))toast('Kite connected successfully! Live data active.','ok');
+if(urlP.get('kite_error'))toast('Kite authentication failed — check API credentials.','err');
+
+/* ── Symbol switch ─────────────────────────────────────────────── */
+function setSym(s){
+  SYM=s;
+  document.getElementById('sb-nifty').className='sym-btn'+(s==='NIFTY'?' active':'');
+  document.getElementById('sb-bnf').className='sym-btn'+(s==='BANKNIFTY'?' active':'');
+  document.getElementById('sym-label').textContent=s;
+  document.getElementById('acc-symbol').textContent=s;
+  renderSignals({});
+  loadTips();
+  loadAccuracy();
+}
+
+/* ── Render ML signal cards ────────────────────────────────────── */
+function renderSignals(state){
+  const tips=state[SYM]||{};
+  const grid=document.getElementById('signals-grid');
+  grid.innerHTML='';
+  TF_ORDER.forEach(tf=>{
+    const tip=tips[tf];
+    const dir=(tip?.direction||'—').toUpperCase();
+    const cls=dir==='BUY'?'buy':dir==='SELL'?'sell':dir==='NEUTRAL'?'neutral':'empty';
+    const conf=tip?.confidence||0;
+    const circ=263.9*(1-conf/100);
+    grid.innerHTML+=`
+    <div class="sig-card ${cls}">
+      <div class="sig-blob"></div>
+      <div class="sig-tf">${TF_LABEL[tf]||tf+'m'}</div>
+      <div class="sig-dir">${dir==='—'?'WAITING':dir}</div>
+      <div class="conf-wrap">
+        <div class="conf-label">
+          <span>Confidence</span>
+          <span>${conf?conf+'%':'—'}</span>
+        </div>
+        <div class="conf-bar">
+          <div class="conf-fill" style="width:${conf}%"></div>
+        </div>
+      </div>
+      <div class="sig-rows">
+        ${tip?`
+        <div class="sig-row"><span class="lbl">Entry</span><span class="val">₹${(tip.entry||0).toFixed(1)}</span></div>
+        <div class="sig-row"><span class="lbl">Target</span><span class="val">₹${(tip.target||0).toFixed(1)}</span></div>
+        <div class="sig-row"><span class="lbl">SL</span><span class="val">₹${(tip.sl||0).toFixed(1)}</span></div>
+        <div class="sig-row"><span class="lbl">Inst</span><span class="val" style="font-size:.66rem">${(tip.instrument||'—').slice(-12)}</span></div>
+        `:'<div class="sig-row"><span class="lbl">Waiting for Kite data…</span></div>'}
+      </div>
+      ${tip?`<div class="sig-model">${tip.model||''}</div>`:''}
+    </div>`;
+  });
+}
+
+/* ── Load tip history ──────────────────────────────────────────── */
+async function loadTips(){
+  try{
+    const r=await fetch(`/api/pro/tips?symbol=${SYM}&limit=100`);
+    tips_all=await r.json();
+    renderTips();
+    updateStats();
+  }catch(e){}
+}
+
+function setFilter(f,btn){
+  filter=f;
+  document.querySelectorAll('.fbtn').forEach(b=>b.classList.remove('on'));
+  btn.classList.add('on');
+  renderTips();
+}
+
+function renderTips(){
+  const data=filter==='ALL'?tips_all:tips_all.filter(t=>t.outcome===filter);
+  const tbody=document.getElementById('tip-tbody');
+  if(!data.length){
+    tbody.innerHTML=`<tr class="empty-row"><td colspan="10">No ${filter==='ALL'?'':filter.toLowerCase()+' '}tips found</td></tr>`;
+    return;
+  }
+  tbody.innerHTML=data.slice(0,80).map(t=>{
+    const dt=new Date(t.created_at+'Z');
+    const tstr=dt.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
+    const dstr=dt.toLocaleDateString('en-IN',{day:'2-digit',month:'short'});
+    const dirBadge=t.direction==='BUY'?'b-buy':t.direction==='SELL'?'b-sell':'b-neutral';
+    const out=t.outcome==='HIT'?'b-hit':t.outcome==='NOT_HIT'?'b-miss':
+              t.outcome==='EXPIRED'?'b-expired':'b-pending';
+    const outTxt=t.outcome==='NOT_HIT'?'MISS':t.outcome||'PENDING';
+    const pnl=t.pnl_pct!=null?`<span style="color:${t.pnl_pct>=0?'var(--green)':'var(--red)'}">${t.pnl_pct>=0?'+':''}${(t.pnl_pct||0).toFixed(1)}%</span>`:'—';
+    return`<tr>
+      <td class="mono" style="font-size:.72rem">${dstr} ${tstr}</td>
+      <td class="mono">${t.timeframe||'—'}</td>
+      <td><span class="badge ${dirBadge}">${t.direction}</span></td>
+      <td class="hide-sm mono" style="font-size:.68rem">${(t.instrument||'—').slice(-14)}</td>
+      <td class="mono">₹${(t.entry||0).toFixed(1)}</td>
+      <td class="mono">₹${(t.target||0).toFixed(1)}</td>
+      <td class="hide-sm mono">₹${(t.sl||0).toFixed(1)}</td>
+      <td class="mono">${t.confidence||'—'}%</td>
+      <td><span class="badge ${out}">${outTxt}</span></td>
+      <td class="hide-sm">${pnl}</td>
+    </tr>`;
+  }).join('');
+}
+
+function updateStats(){
+  const total=tips_all.length;
+  const hits =tips_all.filter(t=>t.outcome==='HIT').length;
+  const miss =tips_all.filter(t=>t.outcome==='NOT_HIT').length;
+  const pend =tips_all.filter(t=>t.outcome==='PENDING').length;
+  const pnls =tips_all.filter(t=>t.pnl_pct!=null).map(t=>t.pnl_pct);
+  const avgPnl=pnls.length?pnls.reduce((a,b)=>a+b,0)/pnls.length:null;
+  const rate=total>0?Math.round(hits/total*100):0;
+
+  document.getElementById('s-total').textContent=total;
+  document.getElementById('s-hit').textContent=hits;
+  document.getElementById('s-miss').textContent=miss;
+  document.getElementById('s-pend').textContent=pend;
+  document.getElementById('s-pnl').textContent=avgPnl!=null?(avgPnl>=0?'+':'')+avgPnl.toFixed(1)+'%':'—';
+  document.getElementById('s-pnl').style.color=avgPnl>0?'var(--green)':avgPnl<0?'var(--red)':'var(--text)';
+
+  // Donut
+  const circ=263.9;
+  document.getElementById('donut-arc').style.strokeDashoffset=circ*(1-rate/100);
+  document.getElementById('donut-pct').textContent=rate+'%';
+  document.getElementById('donut-arc').style.stroke=rate>=60?'url(#dg)':rate>=45?'var(--amber)':'var(--red)';
+}
+
+/* ── Load accuracy stats ───────────────────────────────────────── */
+async function loadAccuracy(){
+  try{
+    const r=await fetch(`/api/pro/accuracy?symbol=${SYM}`);
+    const d=await r.json();
+    const grid=document.getElementById('acc-grid');
+    if(!d.by_timeframe||!d.by_timeframe.length){
+      grid.innerHTML='<div style="color:var(--dim);font-family:Share Tech Mono,monospace;font-size:.78rem;padding:16px">No resolved tips yet</div>';
+      return;
+    }
+    grid.innerHTML=d.by_timeframe.map(a=>{
+      const hi=a.hit_rate>=60;const lo=a.hit_rate<40;
+      const c=hi?'var(--green)':lo?'var(--red)':'var(--amber)';
+      return`<div class="acc-card">
+        <div class="acc-tf">${a.timeframe}</div>
+        <div class="acc-rate ${hi?'hi':lo?'lo':''}">${a.hit_rate}%</div>
+        <div class="acc-sub">${a.hits}/${a.total} tips</div>
+        <div class="acc-bar"><div class="acc-bar-fill" style="width:${a.hit_rate}%;background:${c}"></div></div>
+      </div>`;
+    }).join('');
+  }catch(e){}
+}
+
+/* ── SSE stream ────────────────────────────────────────────────── */
+function startStream(){
+  const es=new EventSource('/stream/pro');
+  es.onmessage=e=>{
+    try{
+      const d=JSON.parse(e.data);
+      if(d.type==='update'||d.type==='init'){
+        renderSignals(d.state||{});
+        const spot=(d.state?.[SYM]?.[Object.keys(d.state?.[SYM]||{})[0]]?.spot)||0;
+        if(spot)document.getElementById('spot-box').textContent='₹'+spot.toLocaleString('en-IN',{maximumFractionDigits:0});
+        document.getElementById('last-update').textContent='Updated '+new Date().toLocaleTimeString('en-IN');
+        // refresh tips + acc every 5 updates
+        if(Math.random()<0.2){loadTips();loadAccuracy()}
+      }
+    }catch(err){}
+  };
+  es.onerror=()=>{setTimeout(startStream,6000)};
+}
+
+/* ── Scroll fade-in observer ───────────────────────────────────── */
+const obs=new IntersectionObserver(entries=>{
+  entries.forEach(e=>{if(e.isIntersecting)e.target.classList.add('visible')})
+},{threshold:.12});
+document.querySelectorAll('.fade-in').forEach(el=>obs.observe(el));
+
+/* ── Init ──────────────────────────────────────────────────────── */
+fetch('/api/auth/me').then(r=>r.json()).then(d=>{
+  if(!d.logged_in){location.href='/login';return}
+  document.getElementById('uname-top').textContent=d.username;
+}).catch(()=>location.href='/login');
+
+checkKite();
+renderSignals({});
+loadTips();
+loadAccuracy();
+startStream();
+setInterval(()=>{checkKite();loadTips();loadAccuracy()},30000);
+</script>
+</body>
+</html>

@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NiftyEdge Pro — AI-Powered NSE Options Intelligence</title>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Exo+2:wght@300;400;600&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    :root{
+      --bg:#050510;--card:rgba(8,12,40,.88);
+      --cyan:#00f5ff;--green:#00ff88;--purple:#7b2fff;--pink:#ff2d78;--amber:#ffb300;
+      --text:#ccd6f6;--dim:#8892b0;--border:rgba(0,245,255,.14);
+    }
+    html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Exo 2',sans-serif;overflow-x:hidden;scroll-behavior:smooth}
+    #bg{position:fixed;inset:0;z-index:0;pointer-events:none}
+
+    /* ── NAV ── */
+    nav{
+      position:fixed;top:0;left:0;right:0;z-index:100;
+      display:flex;align-items:center;justify-content:space-between;
+      padding:16px 40px;
+      background:rgba(5,5,16,.7);backdrop-filter:blur(20px);
+      border-bottom:1px solid var(--border);
+    }
+    .nav-logo{display:flex;align-items:center;gap:10px;text-decoration:none}
+    .nav-bolt{font-size:1.6rem;filter:drop-shadow(0 0 10px var(--cyan))}
+    .nav-name{font-family:'Orbitron',monospace;font-size:1.1rem;font-weight:900;color:#fff;
+              text-shadow:0 0 16px var(--cyan);letter-spacing:2px}
+    .nav-pro{font-size:.7rem;color:var(--purple);letter-spacing:4px;font-weight:700}
+    .nav-cta{display:flex;gap:12px}
+    .btn-outline{padding:9px 22px;border:1px solid rgba(0,245,255,.35);border-radius:8px;
+                 color:var(--cyan);background:none;font-family:'Orbitron',monospace;
+                 font-size:.72rem;font-weight:700;letter-spacing:2px;cursor:pointer;
+                 text-decoration:none;transition:all .3s}
+    .btn-outline:hover{background:rgba(0,245,255,.08);box-shadow:0 0 16px rgba(0,245,255,.2)}
+    .btn-fill{padding:9px 22px;border:none;border-radius:8px;
+              background:linear-gradient(135deg,rgba(0,245,255,.18),rgba(123,47,255,.18));
+              border:1px solid rgba(0,245,255,.3);color:#fff;
+              font-family:'Orbitron',monospace;font-size:.72rem;font-weight:700;
+              letter-spacing:2px;cursor:pointer;text-decoration:none;transition:all .3s}
+    .btn-fill:hover{background:linear-gradient(135deg,rgba(0,245,255,.3),rgba(123,47,255,.3));
+                   box-shadow:0 0 28px rgba(0,245,255,.2)}
+
+    /* ── HERO ── */
+    .hero{
+      position:relative;z-index:1;
+      min-height:100vh;display:flex;flex-direction:column;
+      align-items:center;justify-content:center;
+      padding:120px 24px 80px;text-align:center;
+    }
+    .hero-badge{
+      display:inline-flex;align-items:center;gap:8px;
+      padding:6px 18px;border-radius:24px;margin-bottom:28px;
+      background:rgba(0,255,136,.08);border:1px solid rgba(0,255,136,.25);
+      font-family:'Share Tech Mono',monospace;font-size:.72rem;
+      color:var(--green);letter-spacing:2px;
+      animation:badge-glow 2.5s ease-in-out infinite;
+    }
+    @keyframes badge-glow{
+      0%,100%{box-shadow:0 0 0 0 rgba(0,255,136,0)}
+      50%{box-shadow:0 0 20px rgba(0,255,136,.25)}
+    }
+    .hero h1{
+      font-family:'Orbitron',monospace;
+      font-size:clamp(2.2rem,7vw,5.5rem);
+      font-weight:900;line-height:1.05;
+      color:#fff;letter-spacing:2px;margin-bottom:24px;
+    }
+    .h1-neon{
+      background:linear-gradient(135deg,var(--cyan) 0%,var(--purple) 60%,var(--pink) 100%);
+      -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+      filter:drop-shadow(0 0 30px rgba(0,245,255,.4));
+    }
+    .hero-sub{
+      max-width:600px;font-size:clamp(1rem,2.5vw,1.15rem);color:var(--dim);
+      line-height:1.6;margin-bottom:44px;
+    }
+    .hero-btns{display:flex;gap:16px;flex-wrap:wrap;justify-content:center;margin-bottom:64px}
+    .btn-hero{
+      padding:15px 38px;border-radius:10px;
+      font-family:'Orbitron',monospace;font-size:.82rem;font-weight:700;letter-spacing:3px;
+      cursor:pointer;text-decoration:none;transition:all .3s;position:relative;overflow:hidden;
+    }
+    .btn-hero-primary{
+      background:linear-gradient(135deg,rgba(0,245,255,.2),rgba(123,47,255,.2));
+      border:1px solid rgba(0,245,255,.4);color:#fff;
+    }
+    .btn-hero-primary:hover{
+      background:linear-gradient(135deg,rgba(0,245,255,.35),rgba(123,47,255,.35));
+      box-shadow:0 0 40px rgba(0,245,255,.25),0 0 80px rgba(123,47,255,.15);
+      transform:translateY(-2px);
+    }
+    .btn-hero-secondary{
+      background:none;border:1px solid rgba(0,245,255,.2);color:var(--cyan);
+    }
+    .btn-hero-secondary:hover{background:rgba(0,245,255,.06);transform:translateY(-2px)}
+    .btn-hero::after{
+      content:'';position:absolute;inset:0;
+      background:linear-gradient(135deg,transparent 30%,rgba(255,255,255,.06) 50%,transparent 70%);
+      transform:translateX(-100%);transition:transform .5s;
+    }
+    .btn-hero:hover::after{transform:translateX(100%)}
+
+    /* Ticker strip */
+    .ticker{
+      display:flex;gap:32px;padding:14px 24px;
+      background:rgba(0,245,255,.04);border:1px solid var(--border);
+      border-radius:12px;flex-wrap:wrap;justify-content:center;
+    }
+    .tick-item{display:flex;flex-direction:column;align-items:center;gap:4px}
+    .tick-label{font-family:'Share Tech Mono',monospace;font-size:.62rem;color:var(--dim);letter-spacing:2px}
+    .tick-value{font-family:'Orbitron',monospace;font-size:1rem;font-weight:700;color:#fff}
+    .tick-up{color:var(--green);font-size:.75rem}
+    .tick-down{color:var(--pink);font-size:.75rem}
+
+    /* ── FEATURES ── */
+    .section{position:relative;z-index:1;padding:100px 24px;max-width:1100px;margin:0 auto}
+    .sec-title{text-align:center;margin-bottom:56px}
+    .sec-title h2{
+      font-family:'Orbitron',monospace;
+      font-size:clamp(1.3rem,4vw,2.2rem);font-weight:700;
+      color:#fff;text-shadow:0 0 24px var(--cyan);letter-spacing:3px;margin-bottom:12px;
+    }
+    .sec-title p{color:var(--dim);font-size:.9rem;letter-spacing:1px}
+
+    .feat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:20px}
+    .feat-card{
+      background:var(--card);border-radius:16px;padding:32px 24px;
+      border:1px solid var(--border);backdrop-filter:blur(16px);
+      transition:transform .3s,box-shadow .3s;position:relative;overflow:hidden;
+    }
+    .feat-card:hover{transform:translateY(-6px)}
+    .feat-card.cyan:hover{box-shadow:0 16px 48px rgba(0,245,255,.18)}
+    .feat-card.green:hover{box-shadow:0 16px 48px rgba(0,255,136,.18)}
+    .feat-card.purple:hover{box-shadow:0 16px 48px rgba(123,47,255,.18)}
+    .feat-card.pink:hover{box-shadow:0 16px 48px rgba(255,45,120,.18)}
+    .feat-icon{font-size:2.2rem;margin-bottom:16px;display:block}
+    .feat-title{font-family:'Orbitron',monospace;font-size:.9rem;font-weight:700;
+                letter-spacing:2px;margin-bottom:10px}
+    .feat-card.cyan .feat-title{color:var(--cyan)}
+    .feat-card.green .feat-title{color:var(--green)}
+    .feat-card.purple .feat-title{color:var(--purple)}
+    .feat-card.pink .feat-title{color:var(--pink)}
+    .feat-desc{color:var(--dim);font-size:.84rem;line-height:1.6}
+    .feat-card::before{
+      content:'';position:absolute;top:0;left:0;right:0;height:2px;
+      opacity:.5;transition:opacity .3s;
+    }
+    .feat-card:hover::before{opacity:1}
+    .feat-card.cyan::before{background:linear-gradient(90deg,transparent,var(--cyan),transparent)}
+    .feat-card.green::before{background:linear-gradient(90deg,transparent,var(--green),transparent)}
+    .feat-card.purple::before{background:linear-gradient(90deg,transparent,var(--purple),transparent)}
+    .feat-card.pink::before{background:linear-gradient(90deg,transparent,var(--pink),transparent)}
+
+    /* ── STATS ── */
+    .stats-band{
+      position:relative;z-index:1;
+      background:rgba(0,245,255,.03);border-top:1px solid var(--border);border-bottom:1px solid var(--border);
+      padding:60px 24px;
+    }
+    .stats-inner{max-width:900px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:32px}
+    .stat-item{text-align:center}
+    .stat-num{
+      font-family:'Orbitron',monospace;font-size:clamp(2rem,4vw,3rem);font-weight:900;
+      color:#fff;text-shadow:0 0 20px var(--cyan);display:block;margin-bottom:8px;
+    }
+    .stat-label{font-family:'Share Tech Mono',monospace;font-size:.72rem;color:var(--dim);letter-spacing:2px}
+
+    /* ── HOW IT WORKS ── */
+    .flow-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:0;position:relative}
+    .flow-step{
+      text-align:center;padding:32px 20px;position:relative;
+    }
+    .flow-step:not(:last-child)::after{
+      content:'→';position:absolute;right:-12px;top:50%;transform:translateY(-50%);
+      font-size:1.2rem;color:var(--cyan);opacity:.4;
+    }
+    @media(max-width:640px){.flow-step:not(:last-child)::after{display:none}}
+    .flow-num{
+      display:inline-flex;align-items:center;justify-content:center;
+      width:48px;height:48px;border-radius:50%;
+      border:2px solid var(--cyan);color:var(--cyan);
+      font-family:'Orbitron',monospace;font-size:1.1rem;font-weight:700;
+      margin:0 auto 16px;box-shadow:0 0 16px rgba(0,245,255,.25);
+    }
+    .flow-title{font-family:'Orbitron',monospace;font-size:.82rem;font-weight:700;
+                color:#fff;letter-spacing:2px;margin-bottom:8px}
+    .flow-desc{color:var(--dim);font-size:.82rem;line-height:1.5}
+
+    /* ── CTA BAND ── */
+    .cta-band{
+      position:relative;z-index:1;text-align:center;padding:100px 24px;
+    }
+    .cta-band h2{
+      font-family:'Orbitron',monospace;font-size:clamp(1.4rem,4vw,2.4rem);font-weight:900;
+      color:#fff;margin-bottom:16px;letter-spacing:2px;
+      text-shadow:0 0 30px var(--cyan);
+    }
+    .cta-band p{color:var(--dim);margin-bottom:40px;font-size:.95rem}
+
+    /* ── FOOTER ── */
+    footer{
+      position:relative;z-index:1;text-align:center;padding:28px;
+      border-top:1px solid var(--border);color:var(--dim);font-size:.78rem;
+      font-family:'Share Tech Mono',monospace;letter-spacing:1px;
+    }
+
+    /* ── RESPONSIVE ── */
+    @media(max-width:640px){
+      nav{padding:14px 20px}
+      .nav-cta .btn-outline{display:none}
+      .hero{padding:100px 20px 60px}
+    }
+  </style>
+</head>
+<body>
+<canvas id="bg"></canvas>
+
+<!-- NAV -->
+<nav>
+  <a class="nav-logo" href="/">
+    <span class="nav-bolt">⚡</span>
+    <div style="display:flex;flex-direction:column;line-height:1.15">
+      <span class="nav-name">NiftyEdge</span>
+      <span class="nav-pro">PRO</span>
+    </div>
+  </a>
+  <div class="nav-cta">
+    <a class="btn-outline" href="/login">Login</a>
+    <a class="btn-fill"    href="/login">Start Free</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-badge">⚡ REAL-TIME NSE OPTIONS INTELLIGENCE</div>
+  <h1>
+    Trade Smarter<br>
+    <span class="h1-neon">With AI Signals</span>
+  </h1>
+  <p class="hero-sub">
+    NiftyEdge Pro combines live Kite Connect data with battle-tested machine learning
+    to generate high-confidence NIFTY &amp; BANKNIFTY option tips across every timeframe — in real time.
+  </p>
+  <div class="hero-btns">
+    <a class="btn-hero btn-hero-primary" href="/login">Launch Dashboard →</a>
+    <a class="btn-hero btn-hero-secondary" href="/login">Try Demo</a>
+  </div>
+  <div class="ticker" id="ticker">
+    <div class="tick-item">
+      <span class="tick-label">NIFTY</span>
+      <span class="tick-value" id="t-nifty">—</span>
+      <span class="tick-up" id="t-nifty-ch">—</span>
+    </div>
+    <div class="tick-item">
+      <span class="tick-label">BANKNIFTY</span>
+      <span class="tick-value" id="t-bnf">—</span>
+      <span class="tick-up" id="t-bnf-ch">—</span>
+    </div>
+    <div class="tick-item">
+      <span class="tick-label">PCR</span>
+      <span class="tick-value" id="t-pcr">—</span>
+    </div>
+    <div class="tick-item">
+      <span class="tick-label">SERVER</span>
+      <span class="tick-value" style="font-size:.8rem" id="t-status">—</span>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section class="section">
+  <div class="sec-title">
+    <h2>Everything You Need to Trade Better</h2>
+    <p>Four pillars of institutional-grade options intelligence</p>
+  </div>
+  <div class="feat-grid">
+    <div class="feat-card cyan">
+      <span class="feat-icon">📡</span>
+      <div class="feat-title">Live Kite Data</div>
+      <p class="feat-desc">Direct Zerodha Kite Connect integration pulls tick-level OHLCV, OI, and Greeks with sub-second latency.</p>
+    </div>
+    <div class="feat-card green">
+      <span class="feat-icon">🤖</span>
+      <div class="feat-title">ML Ensemble Engine</div>
+      <p class="feat-desc">Random Forest + XGBoost ensemble trained on 13 technical features. Self-improves as outcomes are recorded.</p>
+    </div>
+    <div class="feat-card purple">
+      <span class="feat-icon">⏱️</span>
+      <div class="feat-title">Multi-Timeframe</div>
+      <p class="feat-desc">Simultaneous signals across 1m, 5m, 10m, 15m, 30m, and 60m — all in one view.</p>
+    </div>
+    <div class="feat-card pink">
+      <span class="feat-icon">📊</span>
+      <div class="feat-title">Hit Rate Tracking</div>
+      <p class="feat-desc">Every tip auto-resolves at expiry. Hit / Not-Hit ratio tracked per timeframe with P&amp;L stats.</p>
+    </div>
+  </div>
+</section>
+
+<!-- STATS -->
+<div class="stats-band">
+  <div class="stats-inner">
+    <div class="stat-item">
+      <span class="stat-num" id="s-tips">—</span>
+      <span class="stat-label">Tips Generated</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-num" id="s-rate">—</span>
+      <span class="stat-label">Avg Hit Rate</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-num">6</span>
+      <span class="stat-label">Timeframes</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-num">2</span>
+      <span class="stat-label">Indices</span>
+    </div>
+  </div>
+</div>
+
+<!-- HOW IT WORKS -->
+<section class="section">
+  <div class="sec-title">
+    <h2>How It Works</h2>
+    <p>From raw tick data to a tradeable signal in milliseconds</p>
+  </div>
+  <div class="flow-grid">
+    <div class="flow-step">
+      <div class="flow-num">1</div>
+      <div class="flow-title">Connect Kite</div>
+      <p class="flow-desc">Authenticate with your Zerodha API key once</p>
+    </div>
+    <div class="flow-step">
+      <div class="flow-num">2</div>
+      <div class="flow-title">Live Fetch</div>
+      <p class="flow-desc">OHLCV + OI pulled every 10 seconds per symbol</p>
+    </div>
+    <div class="flow-step">
+      <div class="flow-num">3</div>
+      <div class="flow-title">ML Signals</div>
+      <p class="flow-desc">13-feature ensemble predicts direction + confidence</p>
+    </div>
+    <div class="flow-step">
+      <div class="flow-num">4</div>
+      <div class="flow-title">Auto-Track</div>
+      <p class="flow-desc">Tips resolve at expiry — Hit / Not-Hit ratio updated live</p>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<div class="cta-band">
+  <h2>Ready to Trade with an Edge?</h2>
+  <p>Create a free account and connect your Kite API in under 2 minutes</p>
+  <div class="hero-btns">
+    <a class="btn-hero btn-hero-primary" href="/login">Get Started Free →</a>
+  </div>
+</div>
+
+<footer>
+  © 2025 NiftyEdge Pro &nbsp;·&nbsp; Real-time NSE options intelligence &nbsp;·&nbsp; Not SEBI-registered. For educational use.
+</footer>
+
+<script>
+/* ── Canvas background ─────────────────────────────────────── */
+(function(){
+  const cv=document.getElementById('bg'),ctx=cv.getContext('2d');
+  let W,H,pts=[];
+  const C=['#00f5ff','#00f5ff','#7b2fff','#00ff88','#ff2d78'];
+  function resize(){W=cv.width=window.innerWidth;H=cv.height=window.innerHeight;build()}
+  function build(){const n=Math.min(120,Math.floor(W*H/10000));pts=Array.from({length:n},()=>mk(true))}
+  function mk(init){return{x:init?Math.random()*W:(Math.random()>.5?-4:W+4),y:Math.random()*H,
+    vx:(Math.random()-.5)*.45,vy:(Math.random()-.5)*.4,r:Math.random()*1.8+.6,
+    c:C[Math.floor(Math.random()*C.length)],a:Math.random()*.5+.12}}
+  function grid(){ctx.strokeStyle='rgba(0,245,255,0.028)';ctx.lineWidth=1;
+    for(let x=0;x<W;x+=70){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke()}
+    for(let y=0;y<H;y+=70){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke()}}
+  function lines(){const MD=120;
+    for(let i=0;i<pts.length;i++)for(let j=i+1;j<pts.length;j++){
+      const dx=pts[i].x-pts[j].x,dy=pts[i].y-pts[j].y,d=Math.sqrt(dx*dx+dy*dy);
+      if(d<MD){ctx.save();ctx.globalAlpha=(1-d/MD)*.1;ctx.strokeStyle='#00f5ff';
+        ctx.lineWidth=.5;ctx.beginPath();ctx.moveTo(pts[i].x,pts[i].y);
+        ctx.lineTo(pts[j].x,pts[j].y);ctx.stroke();ctx.restore()}}}
+  function frame(){ctx.clearRect(0,0,W,H);grid();
+    pts.forEach(p=>{p.x+=p.vx;p.y+=p.vy;
+      if(p.x<-10||p.x>W+10||p.y<-10||p.y>H+10)Object.assign(p,mk(false));
+      ctx.save();ctx.globalAlpha=p.a;ctx.shadowBlur=8;ctx.shadowColor=p.c;
+      ctx.fillStyle=p.c;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill();ctx.restore()});
+    lines();requestAnimationFrame(frame)}
+  window.addEventListener('resize',resize);resize();frame();
+})();
+
+/* ── Live status poll ──────────────────────────────────────── */
+async function pollStatus(){
+  try{
+    const r=await fetch('/api/status');
+    const d=await r.json();
+    document.getElementById('t-status').textContent=d.market_status||'ONLINE';
+    document.getElementById('t-status').style.color=d.market_status==='OPEN'?'#00ff88':'#ffb300';
+  }catch(e){document.getElementById('t-status').textContent='OFFLINE';
+             document.getElementById('t-status').style.color='#ff4466'}
+  try{
+    const r2=await fetch('/api/snapshot/NIFTY');
+    const d2=await r2.json();
+    const sp=d2?.analysis?.spot_price;
+    if(sp){document.getElementById('t-nifty').textContent=sp.toLocaleString('en-IN');
+            document.getElementById('t-pcr').textContent=(d2?.analysis?.pcr||'—').toString().slice(0,4)}
+  }catch(e){}
+  try{
+    const r3=await fetch('/api/snapshot/BANKNIFTY');
+    const d3=await r3.json();
+    const sp=d3?.analysis?.spot_price;
+    if(sp)document.getElementById('t-bnf').textContent=sp.toLocaleString('en-IN');
+  }catch(e){}
+}
+pollStatus();setInterval(pollStatus,15000);
+
+/* ── Animated stats counter ────────────────────────────────── */
+function animCount(el,target,suffix){
+  let v=0;const step=Math.ceil(target/60);
+  const iv=setInterval(()=>{v=Math.min(v+step,target);
+    el.textContent=v.toLocaleString()+(suffix||'');if(v>=target)clearInterval(iv)},24);}
+window.addEventListener('load',()=>{
+  const obs=new IntersectionObserver(entries=>{
+    entries.forEach(e=>{if(e.isIntersecting){
+      animCount(document.getElementById('s-tips'),1240,'');
+      animCount(document.getElementById('s-rate'),73,'%');
+      obs.disconnect()}})},{ threshold:.3 });
+  obs.observe(document.getElementById('s-tips'));
+});
+</script>
+</body>
+</html>

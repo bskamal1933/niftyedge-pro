@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NiftyEdge Pro — Dashboard Hub</title>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Exo+2:wght@300;400;600&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    :root{
+      --bg:#050510;--card:rgba(8,12,40,.9);
+      --cyan:#00f5ff;--green:#00ff88;--purple:#7b2fff;--amber:#ffb300;
+      --text:#ccd6f6;--dim:#8892b0;--border:rgba(0,245,255,.14);
+    }
+    html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Exo 2',sans-serif;overflow-x:hidden}
+    #bg{position:fixed;inset:0;z-index:0;pointer-events:none}
+
+    /* ── TOP BAR ── */
+    .topbar{
+      position:fixed;top:0;left:0;right:0;z-index:100;
+      display:flex;align-items:center;justify-content:space-between;
+      padding:14px 40px;background:rgba(5,5,16,.75);backdrop-filter:blur(20px);
+      border-bottom:1px solid var(--border);
+    }
+    .logo-row{display:flex;align-items:center;gap:10px;text-decoration:none}
+    .bolt{font-size:1.5rem;filter:drop-shadow(0 0 10px var(--cyan))}
+    .logo-words{display:flex;flex-direction:column;line-height:1.1}
+    .logo-main{font-family:'Orbitron',monospace;font-size:1rem;font-weight:900;
+               color:#fff;text-shadow:0 0 16px var(--cyan);letter-spacing:2px}
+    .logo-pro{font-size:.62rem;color:var(--purple);letter-spacing:4px;font-weight:700}
+    .user-area{display:flex;align-items:center;gap:16px}
+    .user-chip{
+      display:flex;align-items:center;gap:8px;padding:6px 14px;
+      background:rgba(0,245,255,.06);border:1px solid rgba(0,245,255,.18);
+      border-radius:20px;font-family:'Share Tech Mono',monospace;font-size:.78rem;color:var(--cyan);
+    }
+    .logout-btn{
+      padding:7px 16px;background:none;border:1px solid rgba(255,45,120,.3);
+      border-radius:7px;color:#ff4466;font-family:'Share Tech Mono',monospace;
+      font-size:.72rem;cursor:pointer;letter-spacing:1px;transition:all .3s;
+    }
+    .logout-btn:hover{background:rgba(255,45,120,.08);box-shadow:0 0 12px rgba(255,45,120,.2)}
+
+    /* ── MAIN ── */
+    .wrap{
+      position:relative;z-index:1;min-height:100vh;
+      display:flex;flex-direction:column;align-items:center;justify-content:center;
+      padding:100px 24px 60px;
+    }
+    .greeting{text-align:center;margin-bottom:48px}
+    .greeting-hi{
+      font-family:'Orbitron',monospace;font-size:clamp(1.1rem,3vw,1.6rem);
+      font-weight:700;color:#fff;letter-spacing:2px;margin-bottom:8px;
+    }
+    .greeting-hi span{color:var(--cyan);text-shadow:0 0 16px var(--cyan)}
+    .greeting-sub{color:var(--dim);font-size:.9rem;letter-spacing:1px}
+
+    /* ── CARDS ── */
+    .cards-grid{
+      display:grid;grid-template-columns:1fr 1fr;gap:28px;
+      width:100%;max-width:820px;
+    }
+    @media(max-width:600px){.cards-grid{grid-template-columns:1fr}}
+
+    .hub-card{
+      position:relative;background:var(--card);border-radius:20px;
+      padding:44px 32px;cursor:pointer;overflow:hidden;
+      backdrop-filter:blur(22px);transition:transform .32s,box-shadow .32s;
+      border:1px solid;text-decoration:none;display:block;
+    }
+    .hub-card.demo-card{border-color:rgba(0,245,255,.18)}
+    .hub-card.demo-card:hover{
+      transform:translateY(-10px) scale(1.015);
+      box-shadow:0 28px 70px rgba(0,245,255,.2),0 0 0 1px rgba(0,245,255,.4);
+    }
+    .hub-card.pro-card{border-color:rgba(123,47,255,.18)}
+    .hub-card.pro-card:hover{
+      transform:translateY(-10px) scale(1.015);
+      box-shadow:0 28px 70px rgba(123,47,255,.22),0 0 0 1px rgba(123,47,255,.4);
+    }
+
+    .blob{position:absolute;width:240px;height:240px;border-radius:50%;
+          top:-100px;right:-80px;filter:blur(80px);opacity:.2;pointer-events:none;transition:opacity .3s}
+    .blob-cyan{background:var(--cyan)}.blob-purple{background:var(--purple)}
+    .hub-card:hover .blob{opacity:.45}
+
+    /* Corner brackets */
+    .cor{position:absolute;width:18px;height:18px}
+    .cor.tl{top:12px;left:12px;border-top:2px solid;border-left:2px solid}
+    .cor.tr{top:12px;right:12px;border-top:2px solid;border-right:2px solid}
+    .cor.bl{bottom:12px;left:12px;border-bottom:2px solid;border-left:2px solid}
+    .cor.br{bottom:12px;right:12px;border-bottom:2px solid;border-right:2px solid}
+    .demo-card .cor{border-color:rgba(0,245,255,.5)}
+    .pro-card  .cor{border-color:rgba(123,47,255,.5)}
+
+    .scan{position:absolute;inset:0;background:repeating-linear-gradient(
+      to bottom,transparent 0px,transparent 3px,rgba(255,255,255,.013) 3px,rgba(255,255,255,.013) 4px
+    );opacity:0;pointer-events:none;transition:opacity .3s}
+    .hub-card:hover .scan{opacity:1}
+
+    .inner{position:relative;z-index:1}
+    .card-ico{font-size:3rem;display:block;margin-bottom:20px}
+    .card-ttl{
+      font-family:'Orbitron',monospace;font-weight:900;letter-spacing:4px;
+      font-size:1.5rem;margin-bottom:10px;
+    }
+    .demo-card .card-ttl{color:var(--cyan);text-shadow:0 0 20px var(--cyan)}
+    .pro-card  .card-ttl{color:var(--purple);text-shadow:0 0 20px var(--purple)}
+    .card-desc{color:var(--dim);font-size:.85rem;line-height:1.55;margin-bottom:24px}
+    .card-feats{list-style:none;margin-bottom:32px}
+    .card-feats li{display:flex;align-items:center;gap:10px;padding:4px 0;font-size:.83rem}
+    .dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+    .dot-c{background:var(--cyan);box-shadow:0 0 8px var(--cyan)}
+    .dot-p{background:var(--purple);box-shadow:0 0 8px var(--purple)}
+
+    .card-btn{
+      width:100%;padding:13px;border:none;border-radius:10px;
+      font-family:'Orbitron',monospace;font-size:.76rem;font-weight:700;letter-spacing:2px;
+      cursor:pointer;display:flex;align-items:center;justify-content:center;gap:12px;
+      transition:all .3s;overflow:hidden;position:relative;
+    }
+    .cbtn-c{background:linear-gradient(135deg,rgba(0,245,255,.12),rgba(0,245,255,.04));
+            color:var(--cyan);border:1px solid rgba(0,245,255,.38)}
+    .cbtn-c:hover{background:linear-gradient(135deg,rgba(0,245,255,.26),rgba(0,245,255,.1));
+                  box-shadow:0 0 24px rgba(0,245,255,.28)}
+    .cbtn-p{background:linear-gradient(135deg,rgba(123,47,255,.12),rgba(123,47,255,.04));
+            color:var(--purple);border:1px solid rgba(123,47,255,.38)}
+    .cbtn-p:hover{background:linear-gradient(135deg,rgba(123,47,255,.26),rgba(123,47,255,.1));
+                  box-shadow:0 0 24px rgba(123,47,255,.28)}
+    .arr{font-size:1rem;transition:transform .3s}
+    .card-btn:hover .arr{transform:translateX(5px)}
+
+    /* Badge on Pro card */
+    .badge-new{
+      position:absolute;top:18px;right:60px;
+      padding:3px 10px;border-radius:10px;
+      background:rgba(123,47,255,.2);border:1px solid rgba(123,47,255,.4);
+      color:var(--purple);font-family:'Share Tech Mono',monospace;font-size:.62rem;
+      letter-spacing:2px;animation:badge-pulse 2s ease-in-out infinite;
+    }
+    @keyframes badge-pulse{0%,100%{opacity:.7}50%{opacity:1}}
+  </style>
+</head>
+<body>
+<canvas id="bg"></canvas>
+
+<!-- TOP BAR -->
+<header class="topbar">
+  <a class="logo-row" href="/">
+    <span class="bolt">⚡</span>
+    <div class="logo-words">
+      <span class="logo-main">NiftyEdge</span>
+      <span class="logo-pro">PRO</span>
+    </div>
+  </a>
+  <div class="user-area">
+    <div class="user-chip">👤 <span id="uname">…</span></div>
+    <button class="logout-btn" onclick="location.href='/logout'">Logout</button>
+  </div>
+</header>
+
+<!-- MAIN -->
+<div class="wrap">
+  <div class="greeting">
+    <div class="greeting-hi">Welcome back, <span id="uname2">Trader</span> 👋</div>
+    <div class="greeting-sub">Choose your trading mode to continue</div>
+  </div>
+
+  <div class="cards-grid">
+
+    <!-- Demo card -->
+    <a class="hub-card demo-card" href="/demo">
+      <div class="blob blob-cyan"></div>
+      <div class="scan"></div>
+      <div class="cor tl"></div><div class="cor tr"></div>
+      <div class="cor bl"></div><div class="cor br"></div>
+      <div class="inner">
+        <span class="card-ico">🔬</span>
+        <div class="card-ttl">DEMO</div>
+        <p class="card-desc">Explore the full dashboard powered by live NSE scraping — no API keys required.</p>
+        <ul class="card-feats">
+          <li><span class="dot dot-c"></span>Live NSE option chain</li>
+          <li><span class="dot dot-c"></span>Multi-factor signal model</li>
+          <li><span class="dot dot-c"></span>OI analysis + candle charts</li>
+          <li><span class="dot dot-c"></span>Adaptive weight engine</li>
+        </ul>
+        <button class="card-btn cbtn-c"><span>Open Demo</span><span class="arr">→</span></button>
+      </div>
+    </a>
+
+    <!-- Pro card -->
+    <a class="hub-card pro-card" href="/pro">
+      <div class="blob blob-purple"></div>
+      <div class="scan"></div>
+      <div class="cor tl"></div><div class="cor tr"></div>
+      <div class="cor bl"></div><div class="cor br"></div>
+      <span class="badge-new">PRO</span>
+      <div class="inner">
+        <span class="card-ico">💎</span>
+        <div class="card-ttl">NIFTYEDGE PRO</div>
+        <p class="card-desc">Kite Connect live data + RF/XGBoost ensemble ML signals with automatic hit-rate tracking.</p>
+        <ul class="card-feats">
+          <li><span class="dot dot-p"></span>Zerodha Kite API integration</li>
+          <li><span class="dot dot-p"></span>RF + XGBoost ML ensemble</li>
+          <li><span class="dot dot-p"></span>Auto hit / not-hit tracking</li>
+          <li><span class="dot dot-p"></span>Separate tip history &amp; win ratio</li>
+        </ul>
+        <button class="card-btn cbtn-p"><span>Open Pro</span><span class="arr">→</span></button>
+      </div>
+    </a>
+
+  </div>
+</div>
+
+<script>
+/* canvas */
+(function(){
+  const cv=document.getElementById('bg'),ctx=cv.getContext('2d');
+  let W,H,pts=[];
+  const C=['#00f5ff','#00f5ff','#7b2fff','#00ff88'];
+  function resize(){W=cv.width=window.innerWidth;H=cv.height=window.innerHeight;
+    pts=Array.from({length:Math.min(90,Math.floor(W*H/12000))},()=>mk(true))}
+  function mk(init){return{x:init?Math.random()*W:(Math.random()>.5?-4:W+4),y:Math.random()*H,
+    vx:(Math.random()-.5)*.42,vy:(Math.random()-.5)*.38,r:Math.random()*1.7+.6,
+    c:C[Math.floor(Math.random()*C.length)],a:Math.random()*.5+.12}}
+  function frame(){ctx.clearRect(0,0,W,H);
+    ctx.strokeStyle='rgba(0,245,255,0.03)';ctx.lineWidth=1;
+    for(let x=0;x<W;x+=70){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke()}
+    for(let y=0;y<H;y+=70){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke()}
+    pts.forEach(p=>{p.x+=p.vx;p.y+=p.vy;
+      if(p.x<-10||p.x>W+10||p.y<-10||p.y>H+10)Object.assign(p,mk(false));
+      ctx.save();ctx.globalAlpha=p.a;ctx.shadowBlur=8;ctx.shadowColor=p.c;
+      ctx.fillStyle=p.c;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill();ctx.restore()});
+    requestAnimationFrame(frame)}
+  window.addEventListener('resize',resize);resize();frame();
+})();
+
+/* load user info */
+fetch('/api/auth/me').then(r=>r.json()).then(d=>{
+  if(!d.logged_in){location.href='/login';return}
+  const n=d.username||'Trader';
+  document.getElementById('uname').textContent=n;
+  document.getElementById('uname2').textContent=n;
+}).catch(()=>location.href='/login');
+</script>
+</body>
+</html>
